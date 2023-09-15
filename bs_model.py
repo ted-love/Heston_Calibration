@@ -36,27 +36,3 @@ def vega(sigma,q,t,T,r,S,K):
     v = S*np.exp(-(r-q)*(T-t))*norm.pdf(d1)*np.sqrt(T-t)
     
     return v
-
-
-from Jackel_method import Jackel_method
-from py_vollib_vectorized import vectorized_implied_volatility as implied_vol
-import time
-
-C=42.9262345428
-S=100
-K=50
-d=0
-r=0.05
-T=1
-
-
-start = time.time()
-imp_pvv = implied_vol(C,S,K,T,r,'c',d,model='black_scholes',return_as='numpy')
-end = time.time()
-time_pvv = end-start
-
-
-start = time.time()
-imp_jm = Jackel_method(S,K,d,T,r,C,1,0.0000001,200)
-end = time.time()
-time_jm = end-start
