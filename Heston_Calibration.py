@@ -13,7 +13,7 @@ import pandas as pd
 import datetime as datetime
 from scipy.optimize import minimize 
 import time
-from Jackel_method import Jackel_method
+from Jaeckel_method import Jaeckel_method
 
 
 import yfinance as yf
@@ -52,7 +52,6 @@ def options_chain(symbol):
 
 SPX,S = options_chain("^SPX")
 
-
 def intersection(l1, l2, l3, l4, l5):
     return list(set(l1) & set(l2) & set(l3) & set(l4) & set(l5))
 
@@ -62,7 +61,7 @@ idx_date_c = set(SPX.index[SPX['dte']>0].tolist())
 idx_price_c = set(SPX.index[SPX['lastPrice']>0.1].tolist())
 idx_OTM_c = set(SPX.index[SPX['inTheMoney']==0].tolist())
 
-indices_call = intersection(idx_vol_c, idx_type_c,idx_date_c,idx_price_c,idx_OTM_c)
+indices_call = intersection(((idx_vol_c, idx_type_c,idx_date_c,idx_price_c,idx_OTM_c)))
 
 
 idx_vol_p = set(SPX.index[SPX['volume'] >=100].tolist())
@@ -168,10 +167,10 @@ for i in indices_new:
      
      if SPX.iloc[i]['CALL'] ==  True:
          theta=1
-         imp_vol =  Jackel_method(S,strike,d,expiry,r,market_price,theta,tol,I)
+         imp_vol =  Jaeckel_method(S,strike,d,expiry,r,market_price,theta,tol,I)
      else:
          theta=-1
-         imp_vol =  Jackel_method(S,strike,d,expiry,r,market_price,theta,tol,I)
+         imp_vol =  Jaeckel_method(S,strike,d,expiry,r,market_price,theta,tol,I)
      iv_array[idx] = imp_vol
      
      idx+=1

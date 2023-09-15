@@ -8,8 +8,6 @@ Created on Sun Sep 10 11:33:22 2023
 
 import numpy as np
 from scipy.stats import norm
-from bs_model import bs_call,bs_put
-
 
 
 def bs_price_normal(x,v,t):

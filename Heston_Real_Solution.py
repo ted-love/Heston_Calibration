@@ -7,7 +7,6 @@ Created on Sat Sep  2 13:00:36 2023
 """
 import numpy as np
 from scipy.integrate import quad,trapezoid
-from heston_model import heston_model
 
 
 def heston_charfunc(phi, S_0, V_0, kappa, theta, sigma, rho, lambd, T, r):
