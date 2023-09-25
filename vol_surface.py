@@ -12,11 +12,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import numpy.ma as ma
 from scipy import interpolate
-from Heston_Real_Solution import heston_price_rec,heston_price_quad,heston_price_trapezoid
 import pandas as pd
 import datetime as datetime
 from scipy.interpolate import griddata,bisplrep,bisplev
-from Jaeckel_method import Jaeckel_method
+from tools.Jaeckel_method import Jaeckel_method
 import yfinance as yf
 
 def options_chain(symbol):
@@ -46,7 +45,7 @@ def options_chain(symbol):
     
     options = options.drop(columns = ['contractSize', 'currency', 'change', 'percentChange', 'lastTradeDate'])
 
-    return options,S,tk
+    return options,S
 
 SPX,S = options_chain("^SPX")
 
