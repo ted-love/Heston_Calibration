@@ -128,7 +128,7 @@ def SqErr(x):
     error = error + penalty
     return error
 
-result = minimize(SqErr, x0, tol = 1e-9, method='Nelder-Mead', options={'maxiter': 30}, bounds=bnds)
+result = minimize(SqErr, x0, tol = 1e-9, method='Nelder-Mead', options={'maxiter': 50}, bounds=bnds)
 V_0_1, kappa_1, theta_1, sigma_1, rho_1, lambd_1 = [param for param in result.x]
 
 end_1 = time.time()
@@ -219,7 +219,7 @@ def SqErr(x):
     error = error + penalty
     return error
 
-result = minimize(SqErr, x0, tol = 1e-9, method='Nelder-Mead', options={'maxiter': 30}, bounds=bnds)
+result = minimize(SqErr, x0, tol = 1e-9, method='Nelder-Mead', options={'maxiter': 50}, bounds=bnds)
 kappa_2, theta_2, sigma_2, rho_2, lambd_2 = [param for param in result.x]
 
 end_2 = time.time()
