@@ -11,7 +11,8 @@ import numpy as np
 from tools.Heston_Real_Solution import heston_price_rec,heston_price_quad,heston_price_trapezoid
 import pandas as pd
 import datetime as datetime
-from scipy.optimize import least_squares
+from scipy.optimize import minimize
+from scipy.interpolate import interp1d
 import time
 from tools.Jaeckel_method import Jaeckel_method
 
@@ -24,7 +25,7 @@ def options_chain(symbol):
     # Expiration dates
     exps = tk.options
   #  dividend = tk.info["dividendYield"]
-    S=tk.info['bid']
+    S=(tk.info['bid']+tk.info['ask'])/2
 
     # Get options for each expiration
     options = pd.DataFrame()
@@ -52,45 +53,29 @@ def options_chain(symbol):
 
 SPX,S = options_chain("^SPX")
 
-def intersection(l1, l2, l3, l4, l5):
-    return list(set(l1) & set(l2) & set(l3) & set(l4) & set(l5))
-
-idx_vol_c = set(SPX.index[SPX['volume'] >=100].tolist())
-idx_type_c = set(SPX.index[SPX['CALL'] ==  True].tolist())
-idx_date_c = set(SPX.index[SPX['dte']>0].tolist())
-idx_price_c = set(SPX.index[SPX['lastPrice']>0.1].tolist())
-idx_OTM_c = set(SPX.index[SPX['inTheMoney']==0].tolist())
-
-indices_call = intersection(idx_vol_c, idx_type_c,idx_date_c,idx_price_c,idx_OTM_c)
 
 
-idx_vol_p = set(SPX.index[SPX['volume'] >=100].tolist())
-idx_type_p = set(SPX.index[SPX['CALL'] ==  False].tolist())
-idx_date_p = set(SPX.index[SPX['dte']>0].tolist())
-idx_price_p = set(SPX.index[SPX['lastPrice']>0.1].tolist())
-idx_OTM_p = set(SPX.index[SPX['inTheMoney']==0].tolist())
+SPX_c = SPX.loc[(SPX['volume']>100) & (SPX['dte']>0) & (SPX['lastPrice']>0.1)]
 
-indices_put = intersection(idx_vol_p, idx_type_p,idx_date_p,idx_price_p,idx_OTM_p)
+ATM_strikes=np.empty((1,2))
 
-indices = indices_call + indices_put
+for i in np.array(SPX["strike"].index):
+    if SPX.loc[i]["strike"]>S:
+        print(i)
+        ATM_strikes[0,1]=SPX.loc[i]["strike"]
+        ATM_strikes[0,0]=SPX.loc[i-1]["strike"]
+        break
+
+
+SPX_v_c=SPX.loc[(SPX['strike']==ATM_strikes[0,1]) & (SPX['CALL']==True) & (SPX['dte']<(21/365)) & (SPX['dte']>0)]
+SPX_v_p=SPX.loc[(SPX['strike']==ATM_strikes[0,0]) & (SPX['CALL']==False) & (SPX['dte']<(21/365)) & (SPX['dte']>0)]
+SPX_v=SPX_v_c.append(SPX_v_p)
+
+market_price = SPX_v.pivot_table(index='dte',columns='strike',values='lastPrice')
 
 
 r=0.054
-tol=0.000001
 
-
-T=np.empty([len(indices),1])
-K=np.empty([len(indices),1])
-market_price=np.empty([len(indices),1])
-
-count=0
-
-for i in indices:
-    T[count] = SPX.iloc[i]['dte']
-    K[count] = SPX.iloc[i]['strike']
-    market_price[count] = SPX.iloc[i]['lastPrice']
-    
-    count+=1
 
 start_1 = time.time()
 
@@ -108,77 +93,82 @@ bnds = [param["bound"] for key, param in params.items()]
 def SqErr(x):
     V_0, kappa, theta, sigma, rho, lambd = [param for param in x]
 
-    w = 1/len(T)
-    err=0
-    idx=0
-    for i in indices:
-        
-        if SPX.iloc[i]['CALL'] ==  True:
-            
-            err = err + (1/w)*(market_price[idx].item()-
-                         heston_price_trapezoid(S, K[idx].item(), V_0, kappa, 
-                                           theta, sigma, rho, lambd, T[idx].item(), r))**2
-        else:
-            D=np.exp(-r*T[idx])
-            
-            err = err + (1/w)*(market_price[idx].item() - (-S + D*K[idx].item() \
-                               +heston_price_trapezoid(S, K[idx].item(), V_0, kappa, 
-                                           theta, sigma, rho, lambd, T[idx].item(), r)))**2
-        idx+=1
-        
-    return err
+    w = 1/np.shape(SPX_c)[0]
+    error=0
+    
+    for i in SPX_c.index.values:
 
-result = minimize(SqErr, x0, tol = 1e-9, method='Nelder-Mead', options={'maxiter': 30 }, bounds=bnds)
+        
+        if SPX_c.loc[i]['CALL'] ==  True:
+            
+            error = error + (1/w)*(SPX_c.loc[i]['lastPrice']-
+                               
+                         heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0, kappa, 
+                                           theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r))**2
+        else:
+            D=np.exp(-r*SPX_c.loc[i]['strike'])
+            
+            # Put-Call parity : D*K - P = S - C
+            # Thus, P = -S + D*K + C
+            
+            error = error + (1/w)*(SPX_c.loc[i]['lastPrice'] - (-S + D*SPX_c.loc[i]['strike'] \
+                               +heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0, kappa, 
+                                                 theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r)))**2
+        
+    penalty = np.sum( [(x_i-x0_i)**2 for x_i, x0_i in zip(x, x0)])
+    
+    error = error + penalty
+    return error
+
+result = minimize(SqErr, x0, tol = 1e-9, method='Nelder-Mead', options={'maxiter': 30}, bounds=bnds)
 V_0_1, kappa_1, theta_1, sigma_1, rho_1, lambd_1 = [param for param in result.x]
-V_0_1, kappa_1, theta_1, sigma_1, rho_1, lambd_1
 
 end_1 = time.time()
 total_1 = end_1 - start_1
 
+
+"""
+
+Calibrating but using V_0 as the implied vol 
+
+"""
+
 start_2 = time.time()
 
+vol = pd.DataFrame().reindex_like(market_price)
+idx=0
 
-
-idx_upper_time= set(SPX.index[SPX['dte']<0.384].tolist())
-idx_lower_time = set(SPX.index[SPX['dte']>0].tolist())
-idx_lower_price = set(SPX.index[SPX['strike']>0.9*S].tolist())
-idx_upper_price = set(SPX.index[SPX['strike']<0.9*S].tolist())
-
-indices_new = intersection(indices,idx_upper_time,idx_lower_time,idx_lower_price,idx_upper_price)
-
-
+r=0.054
 d=0
 tol=0.0000001
 I=100
 
-iv_array = np.empty([len(indices),1])
 idx=0
 
-for i in indices_new:
+for i,j in market_price.iterrows():
+    expiry=i
+    price=j[market_price.columns[1]]
+    strike = market_price.columns[1]
+    theta=1
     
-     expiry = T[idx]
-     strike = K[idx]
-     
-     
-    # market_price = (SPX.iloc[i]['ask'] + SPX.iloc[i]['bid'])/2
-    
-    # using last price as there is a bug with Yahoo finance where it sometimes won't return bid and call prices
-     market_price = SPX.iloc[i]["lastPrice"]
-     
-     # Use weighted price instead : market_price = P_a * V_b / (V_a+V_b) + P_b * V_a (V_a+V_b)
-     # But Yahoo finance does not provide buy/ask volume
-     
-     if SPX.iloc[i]['CALL'] ==  True:
-         theta=1
-         imp_vol =  Jaeckel_method(S,strike,d,expiry,r,market_price,theta,tol,I)
-     else:
-         theta=-1
-         imp_vol =  Jaeckel_method(S,strike,d,expiry,r,market_price,theta,tol,I)
-     iv_array[idx] = imp_vol
-     
-     idx+=1
 
+    vol.loc[expiry][strike] = Jaeckel_method(S,strike,d,expiry,r,price,theta,tol,I)
 
+for i,j in market_price.iterrows():
+    expiry=i
+    price=j[market_price.columns[0]]
+    strike = market_price.columns[0]
+    theta=-1
+
+    vol.loc[expiry][strike] = Jaeckel_method(S,strike,d,expiry,r,price,theta,tol,I)
+
+K_interpol=np.array(vol.columns)
+vol_interpol=[]
+for i in range(len(vol.index)):
+    f = interp1d(K_interpol, vol.iloc[i])
+    vol_interpol.append(f(S))
+
+V_0_2 = np.mean(vol_interpol)
 
 params = { 
           "kappa": {"x0": 2.5, "bound": [0.00001,5]},
@@ -192,102 +182,46 @@ bnds = [param["bound"] for key, param in params.items()]
 
 
 def SqErr(x):
-    
     kappa, theta, sigma, rho, lambd = [param for param in x]
 
-    w = 1/len(T)
-    err=0   
-    for i in range(len(T)):
-        err = err + (1/w)*(market_price[i].item()-
-                     heston_price_trapezoid(S, K[i].item(), 0.155, kappa, 
-                                       theta, sigma, rho, lambd, T[i].item(), r))**2
-    return err 
+    w = 1/np.shape(SPX_c)[0]
+    error=0
+    
+    for i in SPX_c.index.values:
 
-result = minimize(SqErr, x0, tol = 1e-4, method='Nelder-Mead', options={'maxiter': 30}, bounds=bnds)
+        
+        if SPX_c.loc[i]['CALL'] ==  True:
+            
+            error = error + (1/w)*(SPX_c.loc[i]['lastPrice']-
+                               
+                         heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0_2, kappa, 
+                                           theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r))**2
+        else:
+            D=np.exp(-r*SPX_c.loc[i]['strike'])
+            
+            # Put-Call parity : D*K - P = S - C
+            # Thus, P = -S + D*K + C
+            
+            error = error + (1/w)*(SPX_c.loc[i]['lastPrice'] - (-S + D*SPX_c.loc[i]['strike'] \
+                               +heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0_2, kappa, 
+                                                 theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r)))**2
+        
+    penalty = np.sum( [(x_i-x0_i)**2 for x_i, x0_i in zip(x, x0)])
+    
+    error = error + penalty
+    return error
+
+result = minimize(SqErr, x0, tol = 1e-9, method='Nelder-Mead', options={'maxiter': 30}, bounds=bnds)
 kappa_2, theta_2, sigma_2, rho_2, lambd_2 = [param for param in result.x]
 
-
 end_2 = time.time()
-
 total_2 = end_2 - start_2
+V_0_1, kappa_1, theta_1, sigma_1, rho_1, lambd_1
+
+results = {'v_0': [V_0_1, V_0_2], 'kappa': [kappa_1, kappa_2], 'theta':[theta_1,theta_2],'sigma':[sigma_1,sigma_2],
+           "rho":[rho_1,rho_2],"lamda":[lambd_1,lambd_2],"time":[total_1,total_2]}
+
+Results = pd.DataFrame(results)
 
 
-
-params = { 
-          "kappa": {"x0": 2.5, "bound": [0.00001,5]},
-          "theta": {"x0": 0.07, "bound": [0.00001,0.1]},
-          "sigma": {"x0": 0.4, "bound": [0.00001,1]},
-          "rho": {"x0": -0.75, "bound": [-1,-0.0001]},
-          "lambd": {"x0": 0.4, "bound": [-1,1]},
-          }
-x0 = [param["x0"] for key, param in params.items()]
-bnds = [param["bound"] for key, param in params.items()]
-
-
-def SqErr(x):
-    
-    kappa, theta, sigma, rho, lambd = [param for param in x]
-
-    w = 1/len(T)
-    err=0   
-    for i in range(len(T)):
-        err = err + (1/w)*(market_price[i].item()-
-                     heston_price_trapezoid(S, K[i].item(), 0.155, kappa, 
-                                       theta, sigma, rho, lambd, T[i].item(), r))**2
-    return err 
-
-result = minimize(SqErr, x0, tol = 1e-4, method='Nelder-Mead', options={'maxiter': 30}, bounds=bnds)
-kappa_2, theta_2, sigma_2, rho_2, lambd_2 = [param for param in result.x]
-
-
-end_2 = time.time()
-
-total_2 = end_2 - start_2
-
-
-
-
-kappa=1.9
-theta=0.12
-sigma=0.7
-rho=-.8
-lambd=0.6
-V0=0.2
-S=100
-T=[1,2,3,4,5]
-K=[80,90,100,110,120]
-price=np.empty((5,1))
-for i in range(len(T)):
-    price[i]=heston_price_trapezoid(S, K[i], V0, kappa, 
-                  theta, sigma, rho, lambd, T[i], r)
-    
-    
-    
-params = { 
-          "v0": {"x0": 0.1, "bound": [0.00001,0.3]},
-          "kappa": {"x0": 2.5, "bound": [0.00001,5]},
-          "theta": {"x0": 0.07, "bound": [0.00001,0.1]},
-          "sigma": {"x0": 0.4, "bound": [0.00001,1]},
-          "rho": {"x0": -0.75, "bound": [-1,-0.0001]},
-          "lambd": {"x0": 0.4, "bound": [-1,1]},
-          }
-x0 = [param["x0"] for key, param in params.items()]
-bnds = [param["bound"] for key, param in params.items()]
-
-
-def SqErr(x):
-    
-    v0, kappa, theta, sigma, rho, lambd = [param for param in x]
-    
-    w = 1/len(T)
-    err=0   
-    for i in range(len(T)):
-        err = err + (1/w)*(price[i]-
-                     heston_price_trapezoid(S, K[i], v0, kappa, 
-                                       theta, sigma, rho, lambd, T[i], r))**2
-
-    return err 
-
-result = least_squares(SqErr, x0, tol = 1e-10, method='SLSQP', options={'maxiter': 2000}, bounds=bnds)
-v0_2,kappa_2, theta_2, sigma_2, rho_2, lambd_2 = [param for param in result.x]
 
