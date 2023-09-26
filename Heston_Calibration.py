@@ -49,9 +49,11 @@ def options_chain(symbol):
     # Drop unnecessary and meaningless columns
     options = options.drop(columns = ['contractSize', 'currency', 'change', 'percentChange', 'lastTradeDate'])
 
-    return options,S
+    return options,S,tk
 
-SPX,S = options_chain("^SPX")
+SPX,S,SPX_info = options_chain("^SPX")
+VIX,S,VIX_info = options_chain("^VIX")
+
 
 
 
@@ -60,8 +62,8 @@ SPX_c = SPX.loc[(SPX['volume']>100) & (SPX['dte']>0) & (SPX['lastPrice']>0.1)]
 ATM_strikes=np.empty((1,2))
 
 for i in np.array(SPX["strike"].index):
+    
     if SPX.loc[i]["strike"]>S:
-        print(i)
         ATM_strikes[0,1]=SPX.loc[i]["strike"]
         ATM_strikes[0,0]=SPX.loc[i-1]["strike"]
         break
@@ -77,11 +79,17 @@ market_price = SPX_v.pivot_table(index='dte',columns='strike',values='lastPrice'
 r=0.054
 
 
+# Using VIX for initial guess of V_0 for calibration
+V_0_guess = ((VIX_info.info['bid'] +VIX_info.info['ask'])/2)/100
+
+if V_0_guess==0:
+    V_0_guess=VIX_info.info['open']
+
 start_1 = time.time()
 
-params = {"V_0": {"x0": 0.1, "bound": [1e-4,0.5]}, 
+params = {"V_0": {"x0": V_0_guess, "bound": [1e-4,1]}, 
           "kappa": {"x0": 2.5, "bound": [0.00001,5]},
-          "theta": {"x0": 0.07, "bound": [0.00001,0.1]},
+          "theta": {"x0": 0.15, "bound": [0.00001,0.4]},
           "sigma": {"x0": 0.4, "bound": [0.00001,1]},
           "rho": {"x0": -0.75, "bound": [-1,-0.0001]},
           "lambd": {"x0": 0.4, "bound": [-1,1]},
@@ -172,7 +180,7 @@ V_0_2 = np.mean(vol_interpol)
 
 params = { 
           "kappa": {"x0": 2.5, "bound": [0.00001,5]},
-          "theta": {"x0": 0.07, "bound": [0.00001,0.1]},
+          "theta": {"x0": 0.15, "bound": [0.00001,0.4]},
           "sigma": {"x0": 0.4, "bound": [0.00001,1]},
           "rho": {"x0": -0.75, "bound": [-1,-0.0001]},
           "lambd": {"x0": 0.4, "bound": [-1,1]},
@@ -219,7 +227,7 @@ total_2 = end_2 - start_2
 V_0_1, kappa_1, theta_1, sigma_1, rho_1, lambd_1
 
 results = {'v_0': [V_0_1, V_0_2], 'kappa': [kappa_1, kappa_2], 'theta':[theta_1,theta_2],'sigma':[sigma_1,sigma_2],
-           "rho":[rho_1,rho_2],"lamda":[lambd_1,lambd_2],"time":[total_1,total_2]}
+           "rho":[rho_1,rho_2],"lamda":[lambd_1,lambd_2],"time(s)":[total_1,total_2]}
 
 Results = pd.DataFrame(results)
 
