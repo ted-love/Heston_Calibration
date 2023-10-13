@@ -20,11 +20,33 @@ from tools.Jaeckel_method import Jaeckel_method
 import yfinance as yf
 
 def options_chain(symbol):
+    """
+    
 
+    Parameters
+    ----------
+    symbol : str
+        The stock you want data one.
+
+    Returns
+    -------
+    options : DataFrame
+        Options data i.e. bid-ask spread, strikes, expiries etc.
+    S : Int
+        Spot price of the stock.
+    tk : Object
+        Info on the ticker.
+
+    """
+
+    
+    # Get info on the ticker 
     tk = yf.Ticker(symbol)
+    
     # Expiration dates
     exps = tk.options
-  #  dividend = tk.info["dividendYield"]
+    
+    # Dividend = tk.info["dividendYield"]
     S=(tk.info['bid']+tk.info['ask'])/2
 
     # Get options for each expiration
@@ -54,10 +76,22 @@ def options_chain(symbol):
 SPX,S,SPX_info = options_chain("^SPX")
 VIX,S,VIX_info = options_chain("^VIX")
 
+"""
+Sometimes an error in Yahoo finance where S=0. If this happens, input your own S
 
+"""
+if S==0:
+   # return S=200
+   pass
 
-
+# Removing illiquid options and options that are subject to rounding error
 SPX_c = SPX.loc[(SPX['volume']>100) & (SPX['dte']>0) & (SPX['lastPrice']>0.1)]
+
+
+"""
+Getting strike values that are ATM using 1 strike below and 1 strike above the spot price.
+We will use these strikes to retrieve the ATM options data
+"""
 
 ATM_strikes=np.empty((1,2))
 
@@ -69,21 +103,29 @@ for i in np.array(SPX["strike"].index):
         break
 
 
+# Retrieving ATM options data that are <2 weeks from expiry
 SPX_v_c=SPX.loc[(SPX['strike']==ATM_strikes[0,1]) & (SPX['CALL']==True) & (SPX['dte']<(21/365)) & (SPX['dte']>0)]
 SPX_v_p=SPX.loc[(SPX['strike']==ATM_strikes[0,0]) & (SPX['CALL']==False) & (SPX['dte']<(21/365)) & (SPX['dte']>0)]
 SPX_v=SPX_v_c.append(SPX_v_p)
 
 market_price = SPX_v.pivot_table(index='dte',columns='strike',values='lastPrice')
 
-
+# Interest rate
 r=0.054
 
 
 # Using VIX for initial guess of V_0 for calibration
 V_0_guess = ((VIX_info.info['bid'] +VIX_info.info['ask'])/2)/100
 
+# If 
 if V_0_guess==0:
     V_0_guess=VIX_info.info['open']
+
+
+"""
+Calibrating the Heston to market data with VIX as initial V_0 parameter. 
+
+"""
 
 start_1 = time.time()
 
