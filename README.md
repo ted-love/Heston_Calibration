@@ -1,6 +1,6 @@
 # Volatility-Heston
 
-Vol_surface.py calculates the implied vol from OTM Calls & Puts using the Jaeckel method using live SPX options data.
+Vol_surface.py calculates the implied vol from OTM Calls & Puts using the Jaeckel method on live SPX options data.
 
 
 *NOT COMPLETE:*
