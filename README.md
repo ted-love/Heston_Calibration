@@ -2,8 +2,10 @@
 
 Vol_surface.py calculates the implied vol from OTM Calls & Puts using the Jaeckel method on live SPX options data.
 
+*Incomplete:*
+Heston_COS_METHOD.py Calculates European options for the heston model using cosine expansion.
+Cannot price deep ITM or OTM options because the truncation bounds are not well defined.
 
-*NOT COMPLETE:*
 Heston_Calibration.py calibrates the Heston Model using the Nelder-Mead method.
 It also calibrates without calibrating for V_0 but uses ATM implied vol.
 
