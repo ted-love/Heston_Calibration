@@ -15,15 +15,32 @@ from scipy import interpolate
 import pandas as pd
 import datetime as datetime
 from scipy.interpolate import griddata,bisplrep,bisplev
-from tools.Jaeckel_method import Jaeckel_method
+from tools.implied_vol_Jaeckel_method import implied_vol
 import yfinance as yf
 
 def options_chain(symbol):
+    """
+    
+
+    Parameters
+    ----------
+    symbol : Str
+        Stock Ticker.
+
+    Returns
+    -------
+   options : DataFrame
+       Options data i.e. bid-ask spread, strikes, expiries etc.
+    S : Float
+        Spot price of the Stock.
+
+    """
 
     tk = yf.Ticker(symbol)
     # Expiration dates
+    
     exps = tk.options
-  #  dividend = tk.info["dividendYield"]
+    # Dividend = tk.info["dividendYield"]
     S=(tk.info['bid'] + tk.info['ask'])/2 
 
     # Get options for each expiration
@@ -49,43 +66,51 @@ def options_chain(symbol):
 
 SPX,S = options_chain("^SPX")
 
-SPX=SPX.loc[(SPX['dte']<(21/365)) & (SPX['dte']>0)]
+
+"""
+Sometimes an error in Yahoo finance where S=0. If this happens, input your own S
+
+"""
+if S==0:
+
+    S=4374
+
+# Removing illiquid options and options that are subject to rounding error
+
+
+SPX=SPX.loc[(SPX['dte']<(21/365)) & (SPX['dte']>0) & (SPX['strike']>S-50) & (SPX['strike']<S+50)]
                     
-            
-SPX=SPX.loc[(SPX['strike']>S-50) & (SPX['strike']<S+50)]
-
-
-r=0.054
-V_0=0.1
-t=0
-tol=0.000001
-q=0
-
-
-q=0
-
-T=np.empty([len(SPX),1])
-K=np.empty([len(SPX),1])
 market_price=np.empty([len(SPX),1])
 
-count=0
 
+
+
+"""
+Retrieving Strikes, expiries and option prices are NumPy arrays
+"""
 T=SPX['dte'].to_numpy()
 K=SPX['strike'].to_numpy()
-
-
-
 market_price = SPX.pivot_table(index='dte',columns='strike',values='lastPrice')
 
-vol =pd.DataFrame().reindex_like(market_price)
-idx=0
+# Creating DataFrame for the vol so it is like the options prie dataframe
+vol = pd.DataFrame().reindex_like(market_price)
 
-r=0.054
-d=0
+# Constants 
+r=0.054    # Interest rate
+V_0=0.1    # Initial guess of volatility
+q=0        # Dividend Yield
+
+
+"""
+Tolerance and max iterations of the implied vol calculations.
+I=100 is arbitrary as implied vol is normally calculated in 4 iterations
+"""
+
 tol=0.0000001
 I=100
 
 idx=0
+
 for i,j in market_price.items():
     strike = i
     expiries = j.index    
@@ -94,27 +119,34 @@ for i,j in market_price.items():
      
     # market_price = (SPX.iloc[i]['ask'] + SPX.iloc[i]['bid'])/2
     
-    # using last price as there is a bug with Yahoo finance where it sometimes won't return bid and call prices
+    # Using last price as there is a bug with Yahoo finance where it sometimes won't return bid and call prices
      
-     
-     # Use weighted price instead : market_price = P_a * V_b / (V_a+V_b) + P_b * V_a (V_a+V_b)
-     # But Yahoo finance does not provide buy/ask volume
-     
+    """
+    I would normally use weighted price instead : market_price = P_a * V_b / (V_a+V_b) + P_b * V_a (V_a+V_b)
+    But Yahoo finance does not provide buy/ask volume
+    """
     if strike>S:
         idx=0
         for expiry in expiries:
+            
             theta=1
-
-            vol.loc[expiry][strike]=  Jaeckel_method(S,strike,d,expiry,r,price[idx],theta,tol,I)
+            
+            vol.loc[expiry][strike]=  implied_vol(S,strike,q,expiry,r,price[idx],theta,tol,I)
             idx+=1
+    
     else:
         idx=0
         for expiry in expiries:
+            
              theta=-1
-             vol.loc[expiry][strike] =  Jaeckel_method(S,strike,d,expiry,r,price[idx],theta,tol,I)
+             
+             vol.loc[expiry][strike] =  implied_vol(S,strike,q,expiry,r,price[idx],theta,tol,I)
              idx+=1
 
 
+"""
+Reformatting arrays, and ignoring nan values, then plotting the surface
+"""
 
 T=np.array(vol.index)
 K=np.array(vol.columns)
@@ -135,10 +167,7 @@ tck = bisplrep(Ti, Ki, iv_interpol, s=2)
 
 T_new, K_new = np.mgrid[Ti.min():T.max():80j, Ki.min():Ki.max():80j]
 
-
 znew = bisplev(T_new[:,0], K_new[0,:], tck)
-
-
 
 fig = plt.figure()
 ax = fig.add_subplot(111, projection='3d')
