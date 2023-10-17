@@ -14,7 +14,7 @@ import datetime as datetime
 from scipy.optimize import minimize
 from scipy.interpolate import interp1d
 import time
-from tools.Jaeckel_method import Jaeckel_method
+from tools.implied_vol_Jaeckel_method import implied_vol
 
 
 import yfinance as yf
@@ -61,14 +61,12 @@ def options_chain(symbol):
     options['expirationDate'] = pd.to_datetime(options['expirationDate']) + datetime.timedelta(days = 1)
     options['dte'] = (options['expirationDate'] - datetime.datetime.today()).dt.days / 365
     
-    # Boolean column if the option is a CALL
-    options['CALL'] = options['contractSymbol'].str[4:].apply(
-        lambda x: "C" in x)
+    # Call option to boolean
+    options['CALL'] = options['contractSymbol'].str[4:].apply(lambda x: "C" in x)
     
     options[['bid', 'ask', 'strike']] = options[['bid', 'ask', 'strike']].apply(pd.to_numeric)
     options['mark'] = (options['bid'] + options['ask']) / 2 # Calculate the midpoint of the bid-ask
     
-    # Drop unnecessary and meaningless columns
     options = options.drop(columns = ['contractSize', 'currency', 'change', 'percentChange', 'lastTradeDate'])
 
     return options,S,tk
@@ -81,8 +79,8 @@ Sometimes an error in Yahoo finance where S=0. If this happens, input your own S
 
 """
 if S==0:
-   # return S=200
-   pass
+
+    S=4374
 
 # Removing illiquid options and options that are subject to rounding error
 SPX_c = SPX.loc[(SPX['volume']>100) & (SPX['dte']>0) & (SPX['lastPrice']>0.1)]
@@ -103,7 +101,12 @@ for i in np.array(SPX["strike"].index):
         break
 
 
-# Retrieving ATM options data that are <2 weeks from expiry
+
+"""
+Retrieving ATM options data that are <2 weeks from expiry 
+
+"""
+
 SPX_v_c=SPX.loc[(SPX['strike']==ATM_strikes[0,1]) & (SPX['CALL']==True) & (SPX['dte']<(21/365)) & (SPX['dte']>0)]
 SPX_v_p=SPX.loc[(SPX['strike']==ATM_strikes[0,0]) & (SPX['CALL']==False) & (SPX['dte']<(21/365)) & (SPX['dte']>0)]
 SPX_v=SPX_v_c.append(SPX_v_p)
@@ -117,9 +120,9 @@ r=0.054
 # Using VIX for initial guess of V_0 for calibration
 V_0_guess = ((VIX_info.info['bid'] +VIX_info.info['ask'])/2)/100
 
-# If 
+# If VIX doesn't return value 
 if V_0_guess==0:
-    V_0_guess=VIX_info.info['open']
+    V_0_guess=0.15
 
 
 """
@@ -154,7 +157,7 @@ def SqErr(x):
             error = error + (1/w)*(SPX_c.loc[i]['lastPrice']-
                                
                          heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0, kappa, 
-                                           theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r))**2
+                                           theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r,1000))**2
         else:
             D=np.exp(-r*SPX_c.loc[i]['strike'])
             
@@ -163,7 +166,7 @@ def SqErr(x):
             
             error = error + (1/w)*(SPX_c.loc[i]['lastPrice'] - (-S + D*SPX_c.loc[i]['strike'] \
                                +heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0, kappa, 
-                                                 theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r)))**2
+                                                 theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r,1000)))**2
         
     penalty = np.sum( [(x_i-x0_i)**2 for x_i, x0_i in zip(x, x0)])
     
@@ -178,11 +181,9 @@ total_1 = end_1 - start_1
 
 
 """
-
 Calibrating but using V_0 as the implied vol 
 
 """
-
 start_2 = time.time()
 
 vol = pd.DataFrame().reindex_like(market_price)
@@ -195,6 +196,10 @@ I=100
 
 idx=0
 
+"""
+CALCULATING IMPLIED VOLATILITIES
+"""
+
 for i,j in market_price.iterrows():
     expiry=i
     price=j[market_price.columns[1]]
@@ -202,7 +207,7 @@ for i,j in market_price.iterrows():
     theta=1
     
 
-    vol.loc[expiry][strike] = Jaeckel_method(S,strike,d,expiry,r,price,theta,tol,I)
+    vol.loc[expiry][strike] = implied_vol(S,strike,d,expiry,r,price,theta,tol,I)
 
 for i,j in market_price.iterrows():
     expiry=i
@@ -210,15 +215,21 @@ for i,j in market_price.iterrows():
     strike = market_price.columns[0]
     theta=-1
 
-    vol.loc[expiry][strike] = Jaeckel_method(S,strike,d,expiry,r,price,theta,tol,I)
+    vol.loc[expiry][strike] = implied_vol(S,strike,d,expiry,r,price,theta,tol,I)
+
+vol = vol.replace([np.inf,-np.inf],np.nan)
+vol = vol.dropna()
+
 
 K_interpol=np.array(vol.columns)
 vol_interpol=[]
+
 for i in range(len(vol.index)):
     f = interp1d(K_interpol, vol.iloc[i])
     vol_interpol.append(f(S))
 
-V_0_2 = np.mean(vol_interpol)
+V_0_2 = np.mean(vol_interpol) # Interpolated volatility
+
 
 params = { 
           "kappa": {"x0": 2.5, "bound": [0.00001,5]},
@@ -245,7 +256,7 @@ def SqErr(x):
             error = error + (1/w)*(SPX_c.loc[i]['lastPrice']-
                                
                          heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0_2, kappa, 
-                                           theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r))**2
+                                           theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r,1000))**2
         else:
             D=np.exp(-r*SPX_c.loc[i]['strike'])
             
@@ -254,7 +265,7 @@ def SqErr(x):
             
             error = error + (1/w)*(SPX_c.loc[i]['lastPrice'] - (-S + D*SPX_c.loc[i]['strike'] \
                                +heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0_2, kappa, 
-                                                 theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r)))**2
+                                                 theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r,1000)))**2
         
     penalty = np.sum( [(x_i-x0_i)**2 for x_i, x0_i in zip(x, x0)])
     
