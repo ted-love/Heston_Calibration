@@ -11,8 +11,7 @@ import os
 def heston_MC(kappa, omega, N, Nsims, V0, S0, rho, r, K, T, theta, flag):
     # initialise other parameters
     if flag!='c' and flag!='p':
-        print("must choose 'p' or 'c'")
-        return os._exit(0)
+        return print("must choose 'p' or 'c'")
     
     dt = T/N
     
