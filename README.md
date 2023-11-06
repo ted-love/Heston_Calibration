@@ -2,7 +2,7 @@
 
 Vol_surface.py calculates the implied vol from OTM Calls & Puts using the Jaeckel method on live SPX options data.
 
-Heston_COS_METHOD.py calculates European options for the heston model using cosine expansion. Is a robust method for fast Heston calculation and takes the cosine expansion of the whole integral of the fourier transform. It is 300x faster than QuantLib's Python implementation FFT of the Heston, because we can truncate and use far less terms to converge (Typically only 64-100 terms vs 1,000 terms) 
+Heston_COS_METHOD.py is a vectorised method of calculating European options for the heston model using cosine expansion. Is a robust method for fast Heston calculation and takes the cosine expansion of the whole integral of the fourier transform. It is vectorised along the different options AND vectorised along the summation. It is 300x faster than QuantLib's Python implementation FFT of the Heston, because we can truncate and use far less terms to converge (Typically only 64-100 terms vs 1,000 terms) 
 
 *INCOMPLETE*:
 Levenberg_Marquardt.py is my own implementation of the Levenbrg-Marquardt Algorithm for calibrating the Heston model. It can currently calibrate 1 option reasonably well, but is not able to calibrate multiple options at once. (Because I do not have a robust method to choose a damping factor and how to adjust the damping factor after each iteration). 
