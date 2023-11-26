@@ -1,15 +1,7 @@
-# Volatility-Heston
+# Heston_Calibation
 
-Vol_surface.py calculates the implied vol from OTM Calls & Puts using the Jaeckel method on live SPX options data.
+Heston_Calibration.py calibrates the Heston Model using the Levenberg-Marquardt algoithm with COS-expansion calculation for the Heston model. Running the file will use pre-loaded historial data. It transforms prices to implied volatilities and calibrates onto the implied vols. Similar to conclusions in the literauture, the heston model struggles to price short dte options because it struggles to capture the implied vol smirk. Generally calibrate to data > 50-day expiries.
 
-Heston_COS_METHOD.py is a vectorised method of calculating European options for the heston model using cosine expansion. Is a robust method for fast Heston calculation and takes the cosine expansion of the whole integral of the fourier transform. It is vectorised along the different options AND vectorised along the summation. It is 300x faster than QuantLib's Python implementation FFT of the Heston, because we can truncate and use far less terms to converge (Typically only 64-100 terms vs 1,000 terms) 
+tools/Heston_COS_METHOD.py is a vectorised method of calculating European options for the heston model using cosine expansion. It is a robust method for fast Heston calculation and takes the cosine expansion of the whole integral of the fourier transform. It is vectorised along the different options AND vectorised along the summation. It is 300x faster than QuantLib's Python implementation FFT of the Heston, because we can truncate and use far less terms to converge (Typically only 64-100 terms vs 1,000 terms) 
 
-*INCOMPLETE*:
-Levenberg_Marquardt.py is my own implementation of the Levenbrg-Marquardt Algorithm for calibrating the Heston model. It can currently calibrate 1 option reasonably well, but is not able to calibrate multiple options at once. (Because I do not have a robust method to choose a damping factor and how to adjust the damping factor after each iteration). 
-
-Heston_Calibration.py calibrates the Heston Model using the Nelder-Mead method with the Carr-Madan calculation of the Heston. 
-It also calibrates without calibrating for V_0 but uses ATM implied vol.
-
-Errors:
-- Sometimes there is an error in yahoo finance where if markets are closed, it will not return bid/ask option prices. If so, use "lastPrice" for the value of the options.
-- Sometimes yahoo finance will not return the spot price. Then use spot price from other sources
+tools/Levenberg_Marquardt.py is my own implementation of the Levenbrg-Marquardt Algorithm for calibrating the Heston model, and can calibrate all 5 parameters of the heston model. It converts the prices to implied volatilities and calibrated to implied volatilities. The damping factor is reduced based on the gain factor. Thus, the damping factor could still increase even if the step is accepted if the gain factor is too small.
