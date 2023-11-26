@@ -1,53 +1,50 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Created on Sat Jul 29 10:28:48 2023
-
+Created on Tue Sep 12 12:43:12 2023
 @author: ted
+
 """
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
+
 import numpy as np
-from tools.Heston_Real_Solution import heston_price_rec,heston_price_quad,heston_price_trapezoid
 import pandas as pd
 import datetime as datetime
-from scipy.optimize import minimize
-from scipy.interpolate import interp1d
-import time
-from tools.implied_vol_Jaeckel_method import implied_vol
-
-
+from scipy.interpolate import CubicSpline,interp1d
 import yfinance as yf
-
+from py_vollib_vectorized import vectorized_implied_volatility as iv
+from tools.Levenberg_Marquardt import levenberg_Marquardt
+from tools.Heston_COS_METHOD import heston_cosine_method
+from tools.Implied_Dividend_Yield import Implied_Dividend_Yield
+from tools.stock_vol_correlation import calculate_yearly_correlation
+from tools.clean_up_helpers import df_to_numpy
+#%%
 def options_chain(symbol):
     """
-    
 
     Parameters
     ----------
-    symbol : str
-        The stock you want data one.
+    symbol : Str
+        Stock Ticker.
 
     Returns
     -------
     options : DataFrame
-        Options data i.e. bid-ask spread, strikes, expiries etc.
-    S : Int
-        Spot price of the stock.
-    tk : Object
-        Info on the ticker.
+       Options data i.e. bid-ask spread, strikes, expiries etc.
+    S : Float
+        Spot price of the Stock.
 
     """
 
-    
-    # Get info on the ticker 
     tk = yf.Ticker(symbol)
-    
     # Expiration dates
-    exps = tk.options
     
-    # Dividend = tk.info["dividendYield"]
-    S=(tk.info['bid']+tk.info['ask'])/2
+    exps = tk.options
+    if symbol=='^VVIX' or symbol=='^VIX':
+        return tk
+
+    S = (tk.info['bid'] + tk.info['ask'])/2 
 
     # Get options for each expiration
     options = pd.DataFrame()
@@ -57,232 +54,265 @@ def options_chain(symbol):
         opt['expirationDate'] = e
         options = options.append(opt, ignore_index=True)
 
-    # Add 1 day to get the correct expiration date
-    options['expirationDate'] = pd.to_datetime(options['expirationDate']) + datetime.timedelta(days = 1)
+    options['expirationDate'] = pd.to_datetime(options['expirationDate'])
     options['dte'] = (options['expirationDate'] - datetime.datetime.today()).dt.days / 365
     
-    # Call option to boolean
     options['CALL'] = options['contractSymbol'].str[4:].apply(lambda x: "C" in x)
     
     options[['bid', 'ask', 'strike']] = options[['bid', 'ask', 'strike']].apply(pd.to_numeric)
-    options['mark'] = (options['bid'] + options['ask']) / 2 # Calculate the midpoint of the bid-ask
+    options['midPrice'] = (options['bid'] + options['ask']) / 2 
     
-    options = options.drop(columns = ['contractSize', 'currency', 'change', 'percentChange', 'lastTradeDate'])
-
+    options = options.drop(columns = ['contractSize', 'currency', 'impliedVolatility', 'inTheMoney', 'change', 'percentChange', 'lastTradeDate'])
+    
     return options,S,tk
 
+
+"""
+Option chains and historical daily returns
+
+"""
+"""
 SPX,S,SPX_info = options_chain("^SPX")
-VIX,S,VIX_info = options_chain("^VIX")
+VIX_info = options_chain("^VIX")
+VVIX_info = options_chain("^VVIX")
 
-"""
-Sometimes an error in Yahoo finance where S=0. If this happens, input your own S
+date_today = str(datetime.datetime.today().date())
 
-"""
-if S==0:
-
-    S=4374
-
-# Removing illiquid options and options that are subject to rounding error
-SPX_c = SPX.loc[(SPX['volume']>100) & (SPX['dte']>0) & (SPX['lastPrice']>0.1)]
-
-
-"""
-Getting strike values that are ATM using 1 strike below and 1 strike above the spot price.
-We will use these strikes to retrieve the ATM options data
+VVIX_daily = yf.download('^VVIX', start="2004-01-03", end=date_today, interval='1d')
+VIX_daily  = yf.download('^VIX',  start="2004-01-03", end=date_today, interval='1d')
+SPX_daily  = yf.download('^SPX',  start="2004-01-03", end=date_today, interval='1d')
 """
 
-ATM_strikes=np.empty((1,2))
+"""
+Using preloaded data
+"""
+SPX = pd.read_csv('Live_Data_CSV_Sheets/SPX_options_chain_26_11_2023.csv',index_col=0)
+S = pd.read_csv('Live_Data_CSV_Sheets/spot_prices_26_11_2023.csv', index_col=0).iloc[0,0]
 
-for i in np.array(SPX["strike"].index):
-    
-    if SPX.loc[i]["strike"]>S:
-        ATM_strikes[0,1]=SPX.loc[i]["strike"]
-        ATM_strikes[0,0]=SPX.loc[i-1]["strike"]
-        break
+SPX_daily = pd.read_csv('Live_Data_CSV_Sheets/SPX_daily.csv', parse_dates=['Date'], index_col='Date')
+VIX_daily = pd.read_csv('Live_Data_CSV_Sheets/VIX_daily.csv', parse_dates=['Date'], index_col='Date')
+VVIX_daily= pd.read_csv('Live_Data_CSV_Sheets/VVIX_daily.csv',parse_dates=['Date'], index_col='Date')
 
+#%%
+
+ 
+"""
+
+Creating term-structure for the risk-free rate & implied dividend yields
 
 
 """
-Retrieving ATM options data that are <2 weeks from expiry 
+
+Treasury_Dates = [0, 1/12, 3/12, 6/12, 1, 2, 5, 10, 30]
+Treasury_Rates = [0.05355,0.05355, 0.05445, 0.0545, 0.0525, 0.0490, 0.0443, 0.0440, 0.0454]
+Treasury_Curve = CubicSpline(Treasury_Dates, Treasury_Rates, bc_type='natural')
+
+
+t = 50/365
+
+# Local-module Yield-curve generator. 
+Implied_Dividend_Dates, Implied_Dividend_Rates = Implied_Dividend_Yield(SPX, t, S, Treasury_Curve)
+
+Implied_Dividend_Curve = CubicSpline(Implied_Dividend_Dates, Implied_Dividend_Rates, bc_type='natural')
+
+#%%
 
 """
-
-SPX_v_c=SPX.loc[(SPX['strike']==ATM_strikes[0,1]) & (SPX['CALL']==True) & (SPX['dte']<(21/365)) & (SPX['dte']>0)]
-SPX_v_p=SPX.loc[(SPX['strike']==ATM_strikes[0,0]) & (SPX['CALL']==False) & (SPX['dte']<(21/365)) & (SPX['dte']>0)]
-SPX_v=SPX_v_c.append(SPX_v_p)
-
-market_price = SPX_v.pivot_table(index='dte',columns='strike',values='lastPrice')
-
-# Interest rate
-r=0.054
-
-
-# Using VIX for initial guess of V_0 for calibration
-V_0_guess = ((VIX_info.info['bid'] +VIX_info.info['ask'])/2)/100
-
-# If VIX doesn't return value 
-if V_0_guess==0:
-    V_0_guess=0.15
-
-
-"""
-Calibrating the Heston to market data with VIX as initial V_0 parameter. 
-
+Retrieving ATM (that is also OTM) options data for calculating ATM vol.
 """
 
-start_1 = time.time()
+SPX_call_ATM = SPX.loc[(SPX['dte']>0 ) & (SPX['dte']<0.03) & (SPX['midPrice']>0.10) & (SPX['volume']>5) 
+                       & (SPX['strike']<=S+50) & (SPX['CALL']==True) & (SPX['strike']>=S)]
+SPX_put_ATM = SPX.loc[(SPX['dte']>0 ) & (SPX['dte']<0.03) & (SPX['midPrice']>0.10) & (SPX['volume']>5)
+                      & (SPX['strike']>=S-50) & (SPX['CALL']==False) & (SPX['strike']<=S)]
 
-params = {"V_0": {"x0": V_0_guess, "bound": [1e-4,1]}, 
-          "kappa": {"x0": 2.5, "bound": [0.00001,5]},
-          "theta": {"x0": 0.15, "bound": [0.00001,0.4]},
-          "sigma": {"x0": 0.4, "bound": [0.00001,1]},
-          "rho": {"x0": -0.75, "bound": [-1,-0.0001]},
-          "lambd": {"x0": 0.4, "bound": [-1,1]},
-          }
-x0 = [param["x0"] for key, param in params.items()]
-bnds = [param["bound"] for key, param in params.items()]
+SPX_ATM = pd.concat([SPX_call_ATM,SPX_put_ATM])
 
+"""
+Retrieving liquid OTM options data for calibration.
+"""
+SPX_call_calib = SPX.loc[(SPX['dte'] > t) & (SPX['midPrice']>0.10) & (SPX['volume']>600) 
+                       &  (SPX['CALL']==True) & (SPX['strike']>=S+25)]
+SPX_put_calib = SPX.loc[(SPX['dte'] > t)  & (SPX['midPrice']>0.10) & (SPX['volume']>600)
+                       & (SPX['CALL']==False) & (SPX['strike']<=S+25)]
+         
+SPX_calib = pd.concat([SPX_call_calib,SPX_put_calib])
 
-def SqErr(x):
-    V_0, kappa, theta, sigma, rho, lambd = [param for param in x]
+           
+market_price = np.empty([len(SPX_ATM),1])
 
-    w = 1/np.shape(SPX_c)[0]
-    error=0
-    
-    for i in SPX_c.index.values:
+#%%
 
-        
-        if SPX_c.loc[i]['CALL'] ==  True:
-            
-            error = error + (1/w)*(SPX_c.loc[i]['lastPrice']-
-                               
-                         heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0, kappa, 
-                                           theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r,1000))**2
-        else:
-            D=np.exp(-r*SPX_c.loc[i]['strike'])
-            
-            # Put-Call parity : D*K - P = S - C
-            # Thus, P = -S + D*K + C
-            
-            error = error + (1/w)*(SPX_c.loc[i]['lastPrice'] - (-S + D*SPX_c.loc[i]['strike'] \
-                               +heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0, kappa, 
-                                                 theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r,1000)))**2
-        
-    penalty = np.sum( [(x_i-x0_i)**2 for x_i, x0_i in zip(x, x0)])
-    
-    error = error + penalty
-    return error
+"""
+Retrieving Strikes, expiries and option prices are NumPy arrays
+"""
 
-result = minimize(SqErr, x0, tol = 1e-9, method='Nelder-Mead', options={'maxiter': 50}, bounds=bnds)
-V_0_1, kappa_1, theta_1, sigma_1, rho_1, lambd_1 = [param for param in result.x]
+market_price = SPX_ATM.pivot_table(index='dte',columns='strike',values='midPrice')
 
-end_1 = time.time()
-total_1 = end_1 - start_1
+# Creating DataFrame for the vol so it is like the options prie dataframe
+vol_ATM = pd.DataFrame().reindex_like(market_price)
 
 
 """
-Calibrating but using V_0 as the implied vol 
+Calculating V0 from ATM options data.
 
 """
-start_2 = time.time()
+T_ATM, K_ATM, r_ATM, q_ATM, option_prices_ATM, flag_ATM = df_to_numpy(SPX_ATM, Treasury_Curve, Implied_Dividend_Curve)
 
-vol = pd.DataFrame().reindex_like(market_price)
-idx=0
-
-r=0.054
-d=0
-tol=0.0000001
-I=100
+# Calculating implied volatility for ATM options.
+imp_vol_ATM = iv(option_prices_ATM, S, K_ATM, T_ATM, r_ATM, flag_ATM, q_ATM, model='black_scholes_merton',return_as='numpy')
 
 idx=0
+for i in range(len(T_ATM)):
+    vol_ATM.loc[T_ATM[i]][K_ATM[i]] = imp_vol_ATM[i]
+
 
 """
-CALCULATING IMPLIED VOLATILITIES
+Interpolating the data with missing strikes. Each row is for each dte.
+Then for each dte, interpolate and find ATM implied vol, then append for each dte.
 """
 
-for i,j in market_price.iterrows():
-    expiry=i
-    price=j[market_price.columns[1]]
-    strike = market_price.columns[1]
-    theta=1
+K_interpol=np.array(vol_ATM.columns)
+vol_ATM_interpol=[]
+for i in range(len(vol_ATM.index)):
+    vol_row = vol_ATM.iloc[i]
+    not_nan_indices = vol_row.notnull()  
+    interpolated_nans = interp1d(np.where(not_nan_indices)[0], vol_row[not_nan_indices], kind='cubic', fill_value='extrapolate')
+    nan_indices = vol_row.isnull()
+    vol_row[nan_indices] = interpolated_nans(np.where(nan_indices)[0])
+    
+    interpolated_func = interp1d(vol_row.index,vol_row,kind='cubic')
+    vol_ATM_interpol.append(interpolated_func(S))
     
 
-    vol.loc[expiry][strike] = implied_vol(S,strike,d,expiry,r,price,theta,tol,I)
+v0_guess = np.mean(vol_ATM_interpol) # Interpolated volatility
 
-for i,j in market_price.iterrows():
-    expiry=i
-    price=j[market_price.columns[0]]
-    strike = market_price.columns[0]
-    theta=-1
-
-    vol.loc[expiry][strike] = implied_vol(S,strike,d,expiry,r,price,theta,tol,I)
-
-vol = vol.replace([np.inf,-np.inf],np.nan)
-vol = vol.dropna()
+# Turninng into volatility into variance for heston model
+v0_guess = v0_guess**2 
 
 
-K_interpol=np.array(vol.columns)
-vol_interpol=[]
+"""
+Calculating implied vol from the data we wish to calibrated to.
+"""
 
-for i in range(len(vol.index)):
-    f = interp1d(K_interpol, vol.iloc[i])
-    vol_interpol.append(f(S))
-
-V_0_2 = np.mean(vol_interpol) # Interpolated volatility
+T_calib, K_calib, r_calib, q_calib, option_prices_calib, flag_calib = df_to_numpy(SPX_calib, Treasury_Curve, Implied_Dividend_Curve)
 
 
-params = { 
-          "kappa": {"x0": 2.5, "bound": [0.00001,5]},
-          "theta": {"x0": 0.15, "bound": [0.00001,0.4]},
-          "sigma": {"x0": 0.4, "bound": [0.00001,1]},
-          "rho": {"x0": -0.75, "bound": [-1,-0.0001]},
-          "lambd": {"x0": 0.4, "bound": [-1,1]},
-          }
-x0 = [param["x0"] for key, param in params.items()]
-bnds = [param["bound"] for key, param in params.items()]
+# Calculating implied volatility for the options we are calibrating to.
+imp_vol_calib = iv(option_prices_calib, S, K_calib, T_calib, r_calib, flag_calib, q_calib, model='black_scholes_merton',return_as='numpy').reshape(np.size(K_calib),1)
+imp_vol_calib = 100 * imp_vol_calib
 
 
-def SqErr(x):
-    kappa, theta, sigma, rho, lambd = [param for param in x]
 
-    w = 1/np.shape(SPX_c)[0]
-    error=0
-    
-    for i in SPX_c.index.values:
+"""
+Calculating historical averages for initial guesses. Convert std to var for heston
+"""
+VVIX_mean = (np.mean(VVIX_daily['Close'])/100)**2
+VIX_mean  = (np.mean(VIX_daily['Close'])/100)**2
 
+# Local module to calculate the average correlation each year.
+rho_mean  = calculate_yearly_correlation(SPX_daily,VIX_daily)
+
+
+N = 240                  # Number of terms of summation during COS-expansion
+L = 20                   # Length of truncation
+I = 400                  # Max numbr of accepted iterations of calibration
+w = 1.0                  # Weight of initial damping factor   
+F = 10                   # Factor to reduce pre-calibration by
+"""
+Initial Guesses
+"""
+v_bar_guess = VIX_mean   # v_bar : long-term vol
+sigma_guess = VVIX_mean  # sigma : vol of vol
+rho_guess = rho_mean     # rho   : correlation between S and V
+kappa_guess = 2.5        # Kappa : rate of mean-reversion
+v0_guess = v0_guess      # v0    : initial vol
+
+
+initial_guesses = np.array([ v_bar_guess, 
+                             sigma_guess,      
+                             rho_guess,        
+                             kappa_guess,         
+                             v0_guess      ]).reshape(5,1)
+
+
+#%%
+error_array=np.empty([6,2])
+for i in range(2):
+
+    """
+    Using an initial calibration with 1/10 of the data. 
+    """
+    if i==1:
+        M = np.size(K_calib)
         
-        if SPX_c.loc[i]['CALL'] ==  True:
+        K_ini = np.empty(M//F)
+        T_ini = np.empty(M//F)
+        q_ini = np.empty(M//F)
+        r_ini = np.empty(M//F)
+        flag_ini = np.empty(M//F, dtype = str)
+        imp_vol_ini = np.empty(M//F).reshape(M//F,1)
+        for k in range(M//F):
+            K_ini[k] = K_calib[k*F]
+            T_ini[k] = T_calib[k*F]
+            q_ini[k] = q_calib[k*F]
+            r_ini[k] = r_calib[k*F]
+            flag_ini[k] = flag_calib[k*F]
+            imp_vol_ini[k,0] = imp_vol_calib[k*F]
             
-            error = error + (1/w)*(SPX_c.loc[i]['lastPrice']-
-                               
-                         heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0_2, kappa, 
-                                           theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r,1000))**2
-        else:
-            D=np.exp(-r*SPX_c.loc[i]['strike'])
-            
-            # Put-Call parity : D*K - P = S - C
-            # Thus, P = -S + D*K + C
-            
-            error = error + (1/w)*(SPX_c.loc[i]['lastPrice'] - (-S + D*SPX_c.loc[i]['strike'] \
-                               +heston_price_trapezoid(S, SPX_c.loc[i]['strike'], V_0_2, kappa, 
-                                                 theta, sigma, rho, lambd, SPX_c.loc[i]['dte'], r,1000)))**2
         
-    penalty = np.sum( [(x_i-x0_i)**2 for x_i, x0_i in zip(x, x0)])
+        I_ini = I/F
+        
     
-    error = error + penalty
-    return error
+        ini_calibrated_params, counts_accepted, counts_rejected = levenberg_Marquardt(initial_guesses,imp_vol_ini,I_ini,w,S,K_ini,T_ini,N,L,r_ini,q_ini,0,0,0,0,0,flag_ini)
+        
+        """
+        Then use the resuls as the initial guess for full calibration with a smaller damping factor weight. 
+        """ 
+        initial_guesses = ini_calibrated_params 
+        
+    if i==1:
+        w = w*1e-3
+    
+    # Start Calibration
+    calibrated_params,counts_accepted,counts_rejected = levenberg_Marquardt(initial_guesses,imp_vol_calib,I,w,S,K_calib,T_calib,N,L,
+                                                                            r_calib,q_calib,0,0,0,0,0,flag_calib)
+    
+    # Removing nan values if there were any from small priced option 
+  
+    # Prices from the calibrated paramters.
+    calibrated_prices = heston_cosine_method(S,K_calib,T_calib,N,L,r_calib,q_calib,calibrated_params[0],calibrated_params[4],calibrated_params[1],calibrated_params[2],calibrated_params[3],flag_calib)
+    calibrated_iv = (iv(calibrated_prices[0,:], S, K_calib, T_calib, r_calib, flag_calib, q_calib, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K_calib),1)
+    
+    
+    nan_count = 0
+    M = np.size(K_calib)
+    for j in range(M):
+        if np.isnan(calibrated_iv[j]):
+            calibrated_iv[j]=0.
+            imp_vol_calib[j]=0.
+            nan_count+=1
+    
+    
+    print('\nCalibrated_Params:\n', calibrated_params)
+    print('\ncost_function_error (implied vol): ', (1/(M - nan_count)) * np.sum(calibrated_iv - imp_vol_calib))
+    error_array[0,i] = (1/(M - nan_count)) * np.sum(calibrated_iv - imp_vol_calib)            
+    error_array[1:,i] = np.squeeze(calibrated_params)
+    
+print("error options without a pre-calibration: ", error_array[0,0])
+print("error options using a pre-calibration:  ", error_array[0,1])
 
-result = minimize(SqErr, x0, tol = 1e-9, method='Nelder-Mead', options={'maxiter': 50}, bounds=bnds)
-kappa_2, theta_2, sigma_2, rho_2, lambd_2 = [param for param in result.x]
+error_df = pd.DataFrame(error_array,index=['error','v_bar','sigma','rho','kappa','v0'],columns=['no pre-calibration','using pre-calibration'])
 
-end_2 = time.time()
-total_2 = end_2 - start_2
-V_0_1, kappa_1, theta_1, sigma_1, rho_1, lambd_1
+#%%
+"""
+error_df.to_csv('Results_SPX_26_11_2023.csv')
+SPX.to_csv('Live_Data_CSV_Sheets/SPX_options_chain_26_11_2023.csv')
+SPX_daily.to_csv('Live_Data_CSV_Sheets/SPX_daily.csv')
+VIX_daily.to_csv('Live_Data_CSV_Sheets/VIX_daily.csv')
+VVIX_daily.to_csv('Live_Data_CSV_Sheets/VVIX_daily.csv')
 
-results = {'v_0': [V_0_1, V_0_2], 'kappa': [kappa_1, kappa_2], 'theta':[theta_1,theta_2],'sigma':[sigma_1,sigma_2],
-           "rho":[rho_1,rho_2],"lamda":[lambd_1,lambd_2],"time(s)":[total_1,total_2]}
-
-Results = pd.DataFrame(results)
-
-
-
+spot_prices_dict = {"SPX_price" : [S]}
+spot_prices_df = pd.DataFrame(spot_prices_dict)
+spot_prices_df.to_csv('Live_Data_CSV_Sheets/spot_prices_26_11_2023.csv')
+"""
