@@ -17,12 +17,12 @@ import warnings
 warnings.filterwarnings('ignore')
 import numpy as np
 from tools.Heston_COS_METHOD import heston_cosine_method
-from py_vollib_vectorized import vectorized_implied_volatility as iv
+from py_vollib_vectorized import vectorized_implied_volatility as calculate_iv
 from scipy.linalg import inv
 from tools.heston_derivative_constraints import heston_constraints,heston_implied_vol_derivative
 
 
-def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho,kappa,flag):
+def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho,kappa,flag,precision,params_2b_calibrated):
     """
     
 
@@ -62,6 +62,8 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
         Rate of mean-reversion.
     flag : Str
         Option typ, 'c' for call and 'p' for put.
+    precision : Float
+        precision of numerical differentiation
 
     Returns
     -------
@@ -79,12 +81,12 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
     nu = 2
   
     M = np.size(K)
-    eps_1 = 1e-2
+    eps_1 = 1e-5
     eps_2 = eps_1
-    eps_3 = 1e-6
-    f_x = C_market - (iv(heston_cosine_method(S,K,T,N,L,r,q,old_params[0,0],old_params[4,0],old_params[1,0],old_params[2,0],old_params[3,0],flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K),1)
+    eps_3 = 1e-10
+    f_x = C_market - (calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,old_params[0,0],old_params[4,0],old_params[1,0],old_params[2,0],old_params[3,0],flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K),1)
     F_x = 0.5 * (1/M) * f_x.T @ f_x
-    J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0])
+    J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0], precision, params_2b_calibrated)
     
     g = (1/M) * J @ f_x
 
@@ -103,7 +105,7 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
         new_params = heston_constraints(old_params + delta_params, old_params)
         
         # Cost-Function of new step
-        f_xh = C_market - (iv(heston_cosine_method(S,K,T,N,L,r,q,new_params[0],new_params[4],new_params[1],new_params[2],new_params[3],flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K),1)
+        f_xh = C_market - (calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,new_params[0],new_params[4],new_params[1],new_params[2],new_params[3],flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K),1)
         F_xh = 0.5 * (1/M) * f_xh.T@f_xh
      
         gain_ratio = (F_x[0] - F_xh[0]) / (0.5*delta_params.T @ (mu*delta_params - g))
@@ -115,7 +117,7 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
             old_params = new_params[:]
 
 
-            J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0])
+            J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0], precision,params_2b_calibrated)
             
             f_x = f_xh[:]
             F_x = 0.5 * (1/M) * f_x.T @ f_x
@@ -163,11 +165,12 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
             print("Small J")
             skip=0
             break
-        
+        """
         if np.linalg.norm(delta_params)/np.linalg.norm(old_params) < eps_3:
             print("Steps converging to 0!")
             skip = 0
             break
+        """
 
         k+=1
         

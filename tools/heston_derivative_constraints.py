@@ -7,11 +7,11 @@ Created on Sun Nov 26 10:13:22 2023
 """
 
 import numpy as np
-from  py_vollib_vectorized import vectorized_implied_volatility as iv
+from  py_vollib_vectorized import vectorized_implied_volatility as calculate_iv
 from tools.Heston_COS_METHOD import heston_cosine_method
 
 
-def heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,sigma,rho,v0,vbar,kappa):
+def heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,sigma,rho,v0,vbar,kappa,precision,params_2b_calibrated):
     """
     
 
@@ -43,6 +43,8 @@ def heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,sigma,rho,v0,vbar,kappa):
         DESCRIPTION.
     kappa : TYPE
         DESCRIPTION.
+    precision : Float
+        precision of numerical differentiation
 
     Returns
     -------
@@ -51,38 +53,47 @@ def heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,sigma,rho,v0,vbar,kappa):
 
     """
     
-    up=1.01 
-    down=0.99
+    up = 1 + precision
+    down= 1 - precision
+    if 'vbar' in params_2b_calibrated:
+        price_up = calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,vbar*up,v0,sigma,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+        price_down = calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,vbar*down,v0,sigma,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+        
+        deriv_vbar = (price_up - price_down)/((up-down)*vbar)
+    else:
+        deriv_vbar = np.zeros(np.size(K))
 
-    price_up = iv(heston_cosine_method(S,K,T,N,L,r,q,vbar*up,v0,sigma,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
-    price_down = iv(heston_cosine_method(S,K,T,N,L,r,q,vbar*down,v0,sigma,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+    if 'sigma' in params_2b_calibrated:
+        price_up = calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma*up,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+        price_down = calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma*down,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+        
+        deriv_sigma = (price_up - price_down)/((up-down)*sigma)
+    else:
+        deriv_sigma = np.zeros(np.size(K))
     
-    deriv_vbar = (price_up - price_down)/((up-down)*vbar)
-
-
-    price_up = iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma*up,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
-    price_down = iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma*down,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+    if 'rho' in params_2b_calibrated:
+        price_up = calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma,rho*up,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+        price_down = calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma,rho*down,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+       
+        deriv_rho = (price_up - price_down)/((up-down)*rho)
+    else:
+        deriv_rho = np.zeros(np.size(K))
     
-    deriv_sigma = (price_up - price_down)/((up-down)*sigma)
-
-
-    price_up = iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma,rho*up,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
-    price_down = iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma,rho*down,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
-   
-    deriv_rho = (price_up - price_down)/((up-down)*rho)
-           
+    if 'kappa' in params_2b_calibrated:
+        price_up = calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma,rho,kappa*up,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+        price_down = calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma,rho,kappa*down,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+      
+        deriv_kappa = (price_up - price_down)/((up-down)*kappa)
+    else:
+        deriv_kappa =np.zeros(np.size(K))
     
-    price_up = iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma,rho,kappa*up,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
-    price_down = iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0,sigma,rho,kappa*down,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
-  
-    deriv_kappa = (price_up - price_down)/((up-down)*kappa)
-    
-    
-    price_up = iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0*up,sigma,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
-    price_down = iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0*down,sigma,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
-    
-    deriv_v0 = (price_up - price_down) / ((up-down)*v0)
-
+    if 'v0' in params_2b_calibrated:
+        price_up = calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0*up,sigma,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+        price_down = calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,vbar,v0*down,sigma,rho,kappa,flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100
+        
+        deriv_v0 = (price_up - price_down) / ((up-down)*v0)
+    else:
+        deriv_v0 = np.zeros(np.size(K))
 
     deriv_array = np.array([deriv_vbar,deriv_sigma,deriv_rho,deriv_kappa,deriv_v0])
     return deriv_array
