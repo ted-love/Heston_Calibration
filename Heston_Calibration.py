@@ -72,6 +72,7 @@ def options_chain(symbol):
 Option chains and historical daily returns
 
 """
+"""
 
 SPX,S,SPX_info = options_chain("^SPX")
 VIX_info = options_chain("^VIX")
@@ -82,20 +83,21 @@ date_today = str(datetime.datetime.today().date())
 VVIX_daily = yf.download('^VVIX', start="2004-01-03", end=date_today, interval='1d')
 VIX_daily  = yf.download('^VIX',  start="2004-01-03", end=date_today, interval='1d')
 SPX_daily  = yf.download('^SPX',  start="2004-01-03", end=date_today, interval='1d')
+"""
 
 """
 Using preloaded data
 """
 #%%
-"""
 
-SPX = pd.read_csv('Live_Data_CSV_Sheets/SPX_options_chain_26_11_2023.csv',index_col=0)
-S = pd.read_csv('Live_Data_CSV_Sheets/spot_prices_26_11_2023.csv', index_col=0).iloc[0,0]
 
-SPX_daily = pd.read_csv('Live_Data_CSV_Sheets/SPX_daily.csv', parse_dates=['Date'], index_col='Date')
-VIX_daily = pd.read_csv('Live_Data_CSV_Sheets/VIX_daily.csv', parse_dates=['Date'], index_col='Date')
-VVIX_daily= pd.read_csv('Live_Data_CSV_Sheets/VVIX_daily.csv',parse_dates=['Date'], index_col='Date')
-"""
+SPX = pd.read_csv('Results_SPX_2023-11-28/SPX_options_chain.csv',index_col=0)
+S = pd.read_csv('Results_SPX_2023-11-28/spot_prices.csv', index_col=0).iloc[0,0]
+
+SPX_daily = pd.read_csv('Results_SPX_2023-11-28/SPX_daily.csv', parse_dates=['Date'], index_col='Date')
+VIX_daily = pd.read_csv('Results_SPX_2023-11-28/VIX_daily.csv', parse_dates=['Date'], index_col='Date')
+VVIX_daily= pd.read_csv('Results_SPX_2023-11-28/VVIX_daily.csv',parse_dates=['Date'], index_col='Date')
+
 #%%
 
  
@@ -242,11 +244,11 @@ initial_guesses = np.array([ v_bar_guess,
                              kappa_guess,         
                              v0_guess      ]).reshape(5,1)
 
-initial_guesses = np.array([ 0.0421, 
+initial_guesses = np.array([ 0.04385+0.004, 
                              1,      
-                             -0.506,        
-                             2.0,         
-                             0.08     ]).reshape(5,1)
+                             -0.409,        
+                             3.8 ,        
+                             0.015675+0.004    ]).reshape(5,1)
 
 """
 Choose params you want to calibrated. Params not in params_2b_calibrated will be fixed. 
@@ -257,7 +259,7 @@ params_2b_calibrated = ['v0','vbar','sigma','rho','kappa']
 w = w
 #%%
 error_array=np.empty([6,2])
-for i in range(1):
+for i in range(2):
 
     """
     Using an initial calibration with 1/10 of the data. 
@@ -300,7 +302,7 @@ for i in range(1):
     # Removing nan values if there were any from small priced option 
   
     # Prices from the calibrated paramters.
-    calibrated_prices = heston_cosine_method(S,K_calib,T_calib,N,L,r_calib,q_calib,calibrated_params[0],calibrated_params[4],calibrated_params[1],calibrated_params[2],calibrated_params[3],flag_calib)
+    calibrated_prices = heston_cosine_method(S,K_calib,T_calib,N,L,r_calib,q_calib,calibrated_params[0],calibrated_params[4],calibrated_params[1]-1,calibrated_params[2],calibrated_params[3],flag_calib)
     calibrated_iv = (calculate_iv(calibrated_prices[0,:], S, K_calib, T_calib, r_calib, flag_calib, q_calib, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K_calib),1)
     
     
@@ -315,6 +317,7 @@ for i in range(1):
     
     print('\nCalibrated_Params:\n', calibrated_params)
     print('\ncost_function_error (implied vol): ', (1/(M - nan_count)) * np.sum(calibrated_iv - imp_vol_calib))
+    
     error_array[0,i] = (1/(M - nan_count)) * np.sum(calibrated_iv - imp_vol_calib)            
     error_array[1:,i] = np.squeeze(calibrated_params)
     

@@ -107,9 +107,9 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
         # Cost-Function of new step
         f_xh = C_market - (calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,new_params[0],new_params[4],new_params[1],new_params[2],new_params[3],flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K),1)
         F_xh = 0.5 * (1/M) * f_xh.T@f_xh
-     
+  
         gain_ratio = (F_x[0] - F_xh[0]) / (0.5*delta_params.T @ (mu*delta_params - g))
-
+   
         if gain_ratio > 0:
             counts_accepted+=1
             
@@ -117,7 +117,7 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
             old_params = new_params[:]
 
 
-            J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0], precision,params_2b_calibrated)
+            J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0], precision, params_2b_calibrated)
             
             f_x = f_xh[:]
             F_x = 0.5 * (1/M) * f_x.T @ f_x
