@@ -38,7 +38,7 @@ def chi_k(k,a,b,c,d):
                           + M*np.sin(M*(d-a))*np.exp(d) - M*np.sin(M*(c-a))*np.exp(c))
  
 
-def psi_k(k,a,b,c,d,mode):
+def psi_k(k,a,b,c,d):
     """
     
     Parameters
@@ -53,10 +53,6 @@ def psi_k(k,a,b,c,d,mode):
         lower bound of integral.
     d : float
         upper bound of integral.
-    mode : int
-        Direction of vectorisation.
-        1 for vectorising the strikes K.
-        0 for vectorising the N summation
 
     Returns
     -------
@@ -64,42 +60,36 @@ def psi_k(k,a,b,c,d,mode):
         Cosine series coefficients.
 
     """
-    if mode==1:
-        if k==0:
-            return d - c
-        
-        M = k*np.pi/(b-a)
-        psi = (1/M)*(np.sin(M*(d-a)) - np.sin(M*(c-a)))
-        return psi
-    if mode == 0:
-        M = k*np.pi/(b-a)
-        M[0] = 2
-        psi = (1/M)*(np.sin(M*(d-a)) - np.sin(M*(c-a)))
-        psi[0] = d-c
-    
-        return psi
+    M = k*np.pi/(b-a)
+    M[0] = 2
+    psi = (1/M)*(np.sin(M*(d-a)) - np.sin(M*(c-a)))
+    psi[0] = d-c
+
+    return psi
 
 
-def charact_func(omega,r,rho,eta,lambd,u_0,u_bar,T):
+def charact_func(omega,r,q,rho,sigma,kappa,v0,v_bar,T):
     """
     
     The characteristic function of the Heston Model
 
     Parameters
     ----------
-    omega : Float
+    omega : NumPy Array
         Input of the Characteristic function.
-    r : Float
+    r : NumPy array/Float
         Interest Rate.
+    q : NumPy array/Float
+        Dividend Rate.
     rho : Float
         Correlation between Stock and Volatility.
-    eta : Float
+    sigma : Float
         Vol of Vol.
-    lambd : Float
+    kappa : Float
         Rate of mean-reversion.
-    u_0 : Float
+    v0 : Float
         Initial Volatility.
-    u_bar : Float
+    v_bar : Float
         Long-term volatility.
     T : Float
         Stirke.
@@ -110,23 +100,23 @@ def charact_func(omega,r,rho,eta,lambd,u_0,u_bar,T):
         Value of the Characteristic function.
 
     """
+   
+    W = kappa - 1j*rho*sigma*omega
     
-    W = lambd - 1j*rho*eta*omega
+    D = np.sqrt( W**2 + (omega**2 + 1j*omega) * (sigma**2))
     
-    D = np.sqrt( W**2 + (omega**2 + 1j*omega) * (eta**2))
-
     G = (W - D) / (W + D)
     
-    exp_1 = np.exp(1j*omega*r*T + (u_0/(eta**2)) * ((1-np.exp(-D*T))/(1 - G*np.exp(-D*T))) * (W-D))
+    exp_1 = np.exp(1j*omega*(r-q)*T + (v0/(sigma**2)) * ((1-np.exp(-D*T))/(1 - G*np.exp(-D*T))) * (W-D))
     
-    exp_2 = np.exp( (lambd*u_bar)/(eta**2) * ((T * (W - D)) - 2*np.log( (1-G*np.exp(-D*T)) / (1-G) )))
+    exp_2 = np.exp( (kappa*v_bar)/(sigma**2) * ((T * (W - D)) - 2*np.log( (1-G*np.exp(-D*T)) / (1-G) )))
     
     charact_func = exp_1 * exp_2
     
     return charact_func
 
 
-def U_k(k,a,b,mode):
+def U_k(k,a,b):
     """
     
 
@@ -138,10 +128,6 @@ def U_k(k,a,b,mode):
         lower bound of truncation.
     b : float
         upper bound of truncation.
-    mode : int
-        Direction of vectorisation.
-        1 for vectorising the strikes K.
-        0 for vectorising the N summation
 
     Returns
     -------
@@ -149,11 +135,11 @@ def U_k(k,a,b,mode):
         U_k.
 
     """
-    return (2/(b-a)) * (-chi_k(k,a,b,a,0) + psi_k(k,a,b,a,0,mode))
+    return (2/(b-a)) * (-chi_k(k,a,b,a,0) + psi_k(k,a,b,a,0))
 
-def cumulants_truncation(L,T,r,u_bar,u_0,eta,rho,lambd):
+def cumulants_truncation(L,T,r,q,v_bar,v0,sigma,rho,kappa):
     """
-    Cumulants determine the truncation length of the characteristic function
+    Cumulants determine the truncation length of the characteristic function.
 
     Parameters
     ----------
@@ -163,15 +149,15 @@ def cumulants_truncation(L,T,r,u_bar,u_0,eta,rho,lambd):
         Expiry.
     r : float
         Interest rate.
-    u_bar : float
+    v_bar : float
         long-term vol.
-    u_0 : float
+    v0 : float
         Initial vol.
-    eta : float
+    sigma : float
         vol of vol.
     rho : float
         correlation betwen stock and vol.
-    lambd : float
+    kappa : float
         Rate of mean-reversion.
 
     Returns
@@ -182,14 +168,16 @@ def cumulants_truncation(L,T,r,u_bar,u_0,eta,rho,lambd):
         upper bound of truncation.
 
     """
-    c_1 = r*T + (1-np.exp(-lambd*T)) * ((u_bar-u_0)/(2*lambd)) - 0.5*u_bar*T
-    
-    c2_scalar = 1/(8*lambd**3)
-    c2_term1 = eta*T*lambd*np.exp(-lambd*T) * (u_0 - u_bar) * (8*lambd*rho - 4*eta)
-    c2_term2 = lambd*rho*eta*(1-np.exp(-lambd*T)) * (16*u_bar - 8*u_0)
-    c2_term3 = 2 * u_bar * lambd * T * (-4*lambd*rho*eta + eta**2 + 4*lambd**2)
-    c2_term4 = (eta**2) * ( (u_bar - 2*u_0) * np.exp(-2*lambd*T) + u_bar * (6*np.exp(-lambd*T) - 7) + 2*u_0)
-    c2_term5 = (8*lambd**2) * (u_0 - u_bar) * (1-np.exp(-lambd*T))
+
+    c_1 = (r-q)*T + (1-np.exp(-kappa*T)) * ((v_bar-v0)/(2*kappa)) - 0.5*v_bar*T
+
+
+    c2_scalar = 1/(8*kappa**3)
+    c2_term1 = sigma*T*kappa*np.exp(-kappa*T) * (v0 - v_bar) * (8*kappa*rho - 4*sigma)
+    c2_term2 = kappa*rho*sigma*(1-np.exp(-kappa*T)) * (16*v_bar - 8*v0)
+    c2_term3 = 2 * v_bar * kappa * T * (-4*kappa*rho*sigma + sigma**2 + 4*kappa**2)
+    c2_term4 = (sigma**2) * ( (v_bar - 2*v0) * np.exp(-2*kappa*T) + v_bar * (6*np.exp(-kappa*T) - 7) + 2*v0)
+    c2_term5 = (8*kappa**2) * (v0 - v_bar) * (1-np.exp(-kappa*T))
     c_2 = c2_scalar * (c2_term1 +  c2_term2 + c2_term3 + c2_term4 + c2_term5)
 
     a = c_1 - L*np.sqrt(abs(c_2))
@@ -198,7 +186,7 @@ def cumulants_truncation(L,T,r,u_bar,u_0,eta,rho,lambd):
     return a,b
 
 
-def heston_cosine_method(S_0,K,T,N,L,r,q,u_bar,u_0,eta,rho,lambd,flag):
+def heston_cosine_method(S,K,T,N,L,r,q,v_bar,v0,sigma,rho,kappa,flag):
     """
     
     Vectorised Heston Cosine Expansion.
@@ -206,27 +194,29 @@ def heston_cosine_method(S_0,K,T,N,L,r,q,u_bar,u_0,eta,rho,lambd,flag):
 
     Parameters
     ----------
-    S_0 : float
+    S : float
         Spot price of Stock.
     K : NumPy Array
         Numpy array of strikes.
-    T : Float
+    T : NumPy array/Float
         Expiry.
     N : float
         Number of steps for the summation.
     L : float
         Truncation range magnitude.
-    r : Float
+    r : NumPy Array/Float
         Interest Rate.
-    u_bar : Float
+    q : NumPy Array/Float
+        Diidend Rate.
+    v_bar : Float
         Long-term volatility.
-    u_0 : Float
+    v0 : Float
         Initial Volatility.
-    eta : Float
+    sigma : Float
         Vol of Vol.
     rho : Float
         Correlation between Stock and Volatility.
-    lambd : Float
+    kappa : Float
         Rate of mean-reversion of the volatility.
     flag : int
         Type of European option. flag=1 for call option and flag=-1 for put option.
@@ -239,30 +229,42 @@ def heston_cosine_method(S_0,K,T,N,L,r,q,u_bar,u_0,eta,rho,lambd,flag):
     """
     
     
-    a, b = cumulants_truncation(L,T,r,u_bar,u_0,eta,rho,lambd)
+    a, b = cumulants_truncation(L,T,r,q,v_bar,v0,sigma,rho,kappa)
 
  
     k = np.linspace(0,N-1,N).reshape(N,1)
     omega = k*np.pi / (b-a)
-    character_func = charact_func(omega, r, rho, eta, lambd, u_0, u_bar, T)
-    Uk = U_k(k,a,b,0)
+    character_func = charact_func(omega, r, q, rho, sigma, kappa, v0, v_bar, T)
+    Uk = U_k(k,a,b)
     
-    x = np.log(S_0/K)
+    x = np.log(S/K)
     
     integrand = character_func * Uk * np.exp(1j*omega*(x-a))
     
     v =  K * np.exp(-r*T) * np.real( 0.5*integrand[0,:] \
                                 + np.sum(integrand[1:,:],axis=0,keepdims=True))
 
-    if flag == 1:
-        
-        return v + S_0*np.exp(-q*T) - K*np.exp(-r*T)
+    if np.size(K) > 1:
+      
+        for i in range(np.size(K)):
+            
+            if flag[i] == 'c':
+                
+                v[0,i] = v[0,i] + S*np.exp(-q[i]*T[i]) - K[i]*np.exp(-r[i]*T[i])
+                
+        return v
     
-    return v
+    else:
+        
+        if flag == 'c':
+            
+            return v + S*np.exp(-q*T) - K*np.exp(-r*T)
+        
+        return v
 
 
 
-def charact_deriv(omega,eta,T,rho,u_0,u_bar,lambd):
+def charact_deriv(omega,sigma,T,rho,v0,v_bar,kappa):
     """
     The derivative of the characteristic function wrt its parameters
 
@@ -270,17 +272,17 @@ def charact_deriv(omega,eta,T,rho,u_0,u_bar,lambd):
     ----------
     omega : NumPy array
         Independent variable of the characteristinc function as an nxm array.
-    eta : Float
+    sigma : Float
         Vol of Vol.
     T : Float
         Expiration.
     rho : Float
         Correlation between stock and volatility.
-    u_0 : Float
+    v0 : Float
         Initial volatility.
-    u_bar : Float
+    v_bar : Float
         Long-term volatility.
-    lambd : Float
+    kappa : Float
         Rate of mean-reversion of the volatility.
 
     Returns
@@ -289,44 +291,55 @@ def charact_deriv(omega,eta,T,rho,u_0,u_bar,lambd):
         The derivatives of the characteristic function in a 3-dim array.
 
     """
-    xi = lambd - eta*rho*1j*omega
-    d = np.sqrt(xi**2 + (eta**2)*(omega**2+1j*omega))
+    xi = kappa - sigma*rho*1j*omega
+    d = np.sqrt(xi**2 + (sigma**2)*(omega**2+1j*omega))
     
     A1 = (omega**2 + 1j*omega)*np.sinh(d*T/2)
-    A2 = (d/u_0) * np.cosh(d*T/2) + (xi/u_0) * np.sinh(d*T/2)
+    A2 = (d/v0) * np.cosh(d*T/2) + (xi/v0) * np.sinh(d*T/2)
     A=A1/A2
     
-    B = d*np.exp(lambd*T/2)/(u_0*A2)
+    B = d*np.exp(kappa*T/2)/(v0*A2)
     
-    D = np.log(d/u_0) + ((lambd-d)*T)/2 - np.log((d+xi)/(2*u_0) + ((d-xi)/(2*u_0)) * np.exp(-d*T))
+    D = np.log(d/v0) + ((kappa-d)*T)/2 - np.log((d+xi)/(2*v0) + ((d-xi)/(2*v0)) * np.exp(-d*T))
     
-    # Derivatives where the subscript is what the derivative depends on
-    d_rho = -xi*eta*1j*omega/d
-    d_eta = (rho/eta - (1/xi)) * d_rho + (eta*omega**2)/d
+    # Derivatives where the subscript is what the derivative depends on.
+    d_rho = -xi*sigma*1j*omega/d
+    d_sigma = (rho/sigma - (1/xi)) * d_rho + (sigma*omega**2)/d
     
-    A1_rho = -(1j*omega*(omega**2 + 1*omega)*T*xi*eta)/(2*d) * np.cosh(d*T/2)
-    A2_rho = -(eta*omega*1j*(2 + xi*T))/(2*d*u_0) * (xi * np.cosh(d*T/2) + d*np.sinh(d*T/2))
+    A1_rho = -((1j*omega*(omega**2 + 1*omega)*T*xi*sigma)/(2*d)) * np.cosh(d*T/2)
+    A2_rho = -(sigma*omega*1j*(2 + xi*T))/(2*d*v0) * (xi * np.cosh(d*T/2) + d*np.sinh(d*T/2))
     A_rho = A1_rho / A2 - (A/A2)*A2_rho
     
-    A1_eta = (((omega**2 + 1j*omega)*T)/2) * (d_eta*np.cosh(d*T/2))
-    A2_eta = rho*A2_rho/eta - ((2+T*xi)/(u_0*T*xi*omega*1j) * A1_rho) + eta*T*A1/(2*u_0)
-    A_eta = A1_eta/A2 - (A/A2)*A2_eta
+    A1_sigma = (((omega**2 + 1j*omega)*T)/2) * (d_sigma*np.cosh(d*T/2))
+    A2_sigma = rho*A2_rho/sigma - (((2+T*xi)/(v0*T*xi*omega*1j)) * A1_rho) + sigma*T*A1/(2*v0)
+    A_sigma = A1_sigma/A2 - (A/A2)*A2_sigma
     
-    B_rho = (np.exp(lambd*T/2)/u_0) * (d_rho/A2 - d*A2_rho/(A2**2))
-    B_lambd = 1j*B_rho/(eta*omega) + B*T/2    
+    B_rho = (np.exp(kappa*T/2)/v0) * (d_rho/A2 - d*A2_rho/(A2**2))
+    B_kappa = 1j*B_rho/(sigma*omega) + B*T/2    
     
-    h1 = -A/u_0
-    h2 = 2*lambd*D/(eta**2) - lambd*rho*T*1j*omega/eta
-    h3 = -A_rho + ((2*lambd*u_bar)/(d*eta**2)) * (d_rho - (d/A2) * A2_rho) - lambd*u_bar*T*1j*omega/eta
-    h4 = A_rho/(eta*1j*omega) + 2*u_bar*D/(eta**2) + \
-        (2*lambd*u_bar*B_lambd)/(B*eta**2) - u_bar*rho*T*1j*omega/eta
-    h5 = -A_eta - 4*lambd*u_bar*D/(eta**3) + ((2*lambd*u_bar)/(d*eta**2))*(d_eta - d*A2_eta/A2) \
-        + lambd*u_bar*rho*T*1j*omega/(eta**2)
-
-    return np.array([h1,h2,h3,h4,h5])
+    # charact_v0
+    h1 = -A/v0
+    
+    # charact_v_bar
+    h2 = 2*kappa*D/(sigma**2) - kappa*rho*T*1j*omega/sigma
+    
+    # charact_rho
+    h3 = -A_rho + ((2*kappa*v_bar)/(d*sigma**2)) * (d_rho - (d/A2) * A2_rho)\
+        - kappa*v_bar*T*1j*omega/sigma
+    
+    # charact_kappa
+    h4 = A_rho/(sigma*1j*omega) + 2*v_bar*D/(sigma**2) + \
+        (2*kappa*v_bar*B_kappa)/(B*sigma**2) - v_bar*rho*T*1j*omega/sigma
+    
+    # charact_sigma
+    h5 = -A_sigma - 4*kappa*v_bar*D/(sigma**3) + ((2*kappa*v_bar)/(d*sigma**2))*(d_sigma - d*A2_sigma/A2) \
+        + kappa*v_bar*rho*T*1j*omega/(sigma**2)
+    return  np.array([h1,h2,h3,h4,h5])
+  #  return np.array([h1,h2,h3,h4,h5])
        
 
-def heston_cosine_derivatives(S_0,K,T,N,L,r,q,u_bar,u_0,eta,rho,lambd):
+
+def heston_cosine_derivatives(S,K,T,N,L,r,q,v_bar,v0,sigma,rho,kappa):
     """
     
     Derivative of the vectorised Heston Cosine Expansion.
@@ -334,7 +347,7 @@ def heston_cosine_derivatives(S_0,K,T,N,L,r,q,u_bar,u_0,eta,rho,lambd):
 
     Parameters
     ----------
-    S_0 : float
+    S : float
         Spot price of Stock.
     K : NumPy Array
         Strike prices.
@@ -346,15 +359,15 @@ def heston_cosine_derivatives(S_0,K,T,N,L,r,q,u_bar,u_0,eta,rho,lambd):
         Truncation range magnitude.
     r : Float
         Interest Rate.
-    u_bar : Float
+    v_bar : Float
         Long-term volatility.
-    u_0 : Float
+    v0 : Float
         Initial Volatility.
-    eta : Float
+    sigma : Float
         Vol of Vol.
     rho : Float
         Correlation between Stock and Volatility.
-    lambd : Float
+    kappa : Float
         Rate of mean-reversion.
     
     Returns
@@ -365,23 +378,25 @@ def heston_cosine_derivatives(S_0,K,T,N,L,r,q,u_bar,u_0,eta,rho,lambd):
     """
     
     
-    a, b = cumulants_truncation(L,T,r,u_bar,u_0,eta,rho,lambd)
+    a, b = cumulants_truncation(L,T,r,v_bar,v0,sigma,rho,kappa)
     
     
-    x = np.log(S_0/K)
+    x = np.log(S/K)
     k = np.linspace(0.000001,N-1,N).reshape(N,1)
     
+    
+    
     omega = k*np.pi / (b-a)
-    character_func = charact_func(omega, r, rho, eta, lambd, u_0, u_bar, T)
-    Uk = U_k(k,a,b,0)
+    character_func = charact_func(omega, r, rho, sigma, kappa, v0, v_bar, T)
+    Uk = U_k(k,a,b)
     
     integrand = character_func * Uk * np.exp(1j*omega*(x-a))
-    character_derivatives=charact_deriv(omega,eta,T,rho,u_0,u_bar,lambd)
-
+    character_derivatives = charact_deriv(omega,sigma,T,rho,v0,v_bar,kappa)
+    
     v=np.empty([5,np.size(K)])
     for i in range(5):
     
         v[i,:] =  K * np.exp(-r*T) * np.real( 0.5*character_derivatives[i,0,:]*integrand[0,:] \
                                 + np.sum(character_derivatives[i,1:,:]*integrand[1:,:],axis=0,keepdims=True))
     return v
-    
+   
