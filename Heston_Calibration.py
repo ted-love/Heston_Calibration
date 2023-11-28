@@ -8,12 +8,13 @@ Created on Tue Sep 12 12:43:12 2023
 import warnings
 warnings.simplefilter(action='ignore', category=FutureWarning)
 
+import os
 import numpy as np
 import pandas as pd
 import datetime as datetime
 from scipy.interpolate import CubicSpline,interp1d
 import yfinance as yf
-from py_vollib_vectorized import vectorized_implied_volatility as iv
+from py_vollib_vectorized import vectorized_implied_volatility as calculate_iv
 from tools.Levenberg_Marquardt import levenberg_Marquardt
 from tools.Heston_COS_METHOD import heston_cosine_method
 from tools.Implied_Dividend_Yield import Implied_Dividend_Yield
@@ -137,11 +138,7 @@ Retrieving liquid OTM options data for calibration.
 """
 SPX_call_calib = filter_option_chain(SPX, 20/365, 10000, S+5, 9999999999, 600, 'c', price_type, 0.10)
 SPX_put_calib  = filter_option_chain(SPX, 20/365, 10000, 0, S-5, 600, 'p', price_type, 0.10)
-SPX_call_calib = SPX.loc[(SPX['dte'] > t) & (SPX['midPrice'] > 0.10) & (SPX['volume']>600) 
-                       &  (SPX['CALL']==True) & (SPX['strike']>=S+25)]
-SPX_put_calib = SPX.loc[(SPX['dte'] > t)  & (SPX['midPrice']>0.10) & (SPX['volume']>600)
-                       & (SPX['CALL']==False) & (SPX['strike']<=S+25)]
-         
+
 SPX_calib = pd.concat([SPX_call_calib,SPX_put_calib])
 
            
@@ -165,7 +162,7 @@ Calculating V0 from ATM options data.
 T_ATM, K_ATM, r_ATM, q_ATM, option_prices_ATM, flag_ATM = df_to_numpy(SPX_ATM, Treasury_Curve, Implied_Dividend_Curve, price_type)
 
 # Calculating implied volatility for ATM options.
-imp_vol_ATM = iv(option_prices_ATM, S, K_ATM, T_ATM, r_ATM, flag_ATM, q_ATM, model='black_scholes_merton',return_as='numpy')
+imp_vol_ATM = calculate_iv(option_prices_ATM, S, K_ATM, T_ATM, r_ATM, flag_ATM, q_ATM, model='black_scholes_merton',return_as='numpy')
 
 idx=0
 for i in range(len(T_ATM)):
@@ -204,7 +201,7 @@ T_calib, K_calib, r_calib, q_calib, option_prices_calib, flag_calib = df_to_nump
 
 
 # Calculating implied volatility for the options we are calibrating to.
-imp_vol_calib = iv(option_prices_calib, S, K_calib, T_calib, r_calib, flag_calib, q_calib, model='black_scholes_merton',return_as='numpy').reshape(np.size(K_calib),1)
+imp_vol_calib = calculate_iv(option_prices_calib, S, K_calib, T_calib, r_calib, flag_calib, q_calib, model='black_scholes_merton',return_as='numpy').reshape(np.size(K_calib),1)
 
 imp_vol_calib, option_prices_calib, K_calib, T_calib, r_calib, flag_calib, q_calib = removing_nans(imp_vol_calib, option_prices_calib, K_calib, T_calib, r_calib, flag_calib, q_calib)
 
@@ -227,6 +224,8 @@ L = 20                   # Length of truncation
 I = 400                  # Max numbr of accepted iterations of calibration
 w = 1.0                  # Weight of initial damping factor   
 F = 10                   # Factor to reduce pre-calibration by
+precision = 0.01         # Precision of numerical differentiation
+
 """
 Initial Guesses
 """
@@ -243,10 +242,22 @@ initial_guesses = np.array([ v_bar_guess,
                              kappa_guess,         
                              v0_guess      ]).reshape(5,1)
 
+initial_guesses = np.array([ 0.0421, 
+                             1,      
+                             -0.506,        
+                             2.0,         
+                             0.08     ]).reshape(5,1)
 
+"""
+Choose params you want to calibrated. Params not in params_2b_calibrated will be fixed. 
+put params to be calibrated: 'v0','vbar','sigma','rho','kappa'
+"""
+
+params_2b_calibrated = ['v0','vbar','sigma','rho','kappa']
+w = w
 #%%
 error_array=np.empty([6,2])
-for i in range(2):
+for i in range(1):
 
     """
     Using an initial calibration with 1/10 of the data. 
@@ -272,7 +283,7 @@ for i in range(2):
         I_ini = I/F
         
     
-        ini_calibrated_params, counts_accepted, counts_rejected = levenberg_Marquardt(initial_guesses,imp_vol_ini,I_ini,w,S,K_ini,T_ini,N,L,r_ini,q_ini,0,0,0,0,0,flag_ini)
+        ini_calibrated_params, counts_accepted, counts_rejected = levenberg_Marquardt(initial_guesses,imp_vol_ini,I_ini,w,S,K_ini,T_ini,N,L,r_ini,q_ini,0,0,0,0,0,flag_ini,precision,params_2b_calibrated)
         
         """
         Then use the resuls as the initial guess for full calibration with a smaller damping factor weight. 
@@ -284,13 +295,13 @@ for i in range(2):
     
     # Start Calibration
     calibrated_params,counts_accepted,counts_rejected = levenberg_Marquardt(initial_guesses,imp_vol_calib,I,w,S,K_calib,T_calib,N,L,
-                                                                            r_calib,q_calib,0,0,0,0,0,flag_calib)
+                                                                            r_calib,q_calib,0,0,0,0,0,flag_calib,precision,params_2b_calibrated)
     
     # Removing nan values if there were any from small priced option 
   
     # Prices from the calibrated paramters.
     calibrated_prices = heston_cosine_method(S,K_calib,T_calib,N,L,r_calib,q_calib,calibrated_params[0],calibrated_params[4],calibrated_params[1],calibrated_params[2],calibrated_params[3],flag_calib)
-    calibrated_iv = (iv(calibrated_prices[0,:], S, K_calib, T_calib, r_calib, flag_calib, q_calib, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K_calib),1)
+    calibrated_iv = (calculate_iv(calibrated_prices[0,:], S, K_calib, T_calib, r_calib, flag_calib, q_calib, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K_calib),1)
     
     
     nan_count = 0
@@ -313,14 +324,42 @@ print("error options using a pre-calibration:  ", error_array[0,1])
 error_df = pd.DataFrame(error_array,index=['error','v_bar','sigma','rho','kappa','v0'],columns=['no pre-calibration','using pre-calibration'])
 
 #%%
-"""
-error_df.to_csv('Results_SPX_26_11_2023.csv')
-SPX.to_csv('Live_Data_CSV_Sheets/SPX_options_chain_26_11_2023.csv')
-SPX_daily.to_csv('Live_Data_CSV_Sheets/SPX_daily.csv')
-VIX_daily.to_csv('Live_Data_CSV_Sheets/VIX_daily.csv')
-VVIX_daily.to_csv('Live_Data_CSV_Sheets/VVIX_daily.csv')
+
+os.mkdir(f'Results_SPX_{date_today}')
+
+error_df.to_csv(f'Results_SPX_{date_today}/Results.csv')
+SPX.to_csv(f'Results_SPX_{date_today}/SPX_options_chain.csv',)
+SPX_daily.to_csv(f'Results_SPX_{date_today}/SPX_daily.csv')
+VIX_daily.to_csv(f'Results_SPX_{date_today}/VIX_daily.csv')
+VVIX_daily.to_csv(f'Results_SPX_{date_today}/VVIX_daily.csv')
 
 spot_prices_dict = {"SPX_price" : [S]}
 spot_prices_df = pd.DataFrame(spot_prices_dict)
-spot_prices_df.to_csv('Live_Data_CSV_Sheets/spot_prices_26_11_2023.csv')
-"""
+spot_prices_df.to_csv(f'Results_SPX_{date_today}/spot_prices.csv')
+
+
+
+#%%
+
+import matplotlib.pyplot as plt
+
+sigma = np.linspace(0.01,2,100)
+
+for i in range(13):
+    plt.plot(sigma, heston_cosine_method(S,K_calib[i*10],T_calib[i*10],N,L,r_calib[i*10],q_calib[i*10],calibrated_params[0],calibrated_params[4],sigma,calibrated_params[2],calibrated_params[3],flag_calib[i*10])[0,:])
+    plt.title("idx=" + str(i*10) +", " +str(K_calib[i*10])+", "+str(round(T_calib[i*10],4))+", "+str(round(r_calib[i*10],4)) +", "+str(round(q_calib[i*10],4)) +", "+str(flag_calib[i*10]))
+    plt.show()
+
+#%%
+m=12
+for i in np.arange(-200,200,20):
+    plt.subplot(1, 2, 1)
+
+    plt.plot(sigma, heston_cosine_method(S,S+i,T_calib[m*10],N,L,r_calib[m*10],q_calib[m*10],calibrated_params[0],calibrated_params[4],sigma,calibrated_params[2],calibrated_params[3],'c')[0,:])
+    plt.title('c, K = ' + str(S+i))
+    plt.subplot(1, 2, 2)
+
+    plt.plot(sigma, heston_cosine_method(S,S+i,T_calib[m*10],N,L,r_calib[m*10],q_calib[m*10],calibrated_params[0],calibrated_params[4],sigma,calibrated_params[2],calibrated_params[3],'p')[0,:])
+    plt.title('p, K = ' + str(S+i))
+    
+    plt.show()
