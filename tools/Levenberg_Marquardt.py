@@ -82,7 +82,6 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
     eps_1 = 1e-2
     eps_2 = eps_1
     eps_3 = 1e-6
-
     f_x = C_market - (iv(heston_cosine_method(S,K,T,N,L,r,q,old_params[0,0],old_params[4,0],old_params[1,0],old_params[2,0],old_params[3,0],flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K),1)
     F_x = 0.5 * (1/M) * f_x.T @ f_x
     J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0])

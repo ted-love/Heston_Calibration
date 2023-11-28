@@ -18,7 +18,7 @@ from tools.Levenberg_Marquardt import levenberg_Marquardt
 from tools.Heston_COS_METHOD import heston_cosine_method
 from tools.Implied_Dividend_Yield import Implied_Dividend_Yield
 from tools.stock_vol_correlation import calculate_yearly_correlation
-from tools.clean_up_helpers import df_to_numpy
+from tools.clean_up_helpers import df_to_numpy,filter_option_chain,removing_nans
 #%%
 def options_chain(symbol):
     """
@@ -71,7 +71,7 @@ def options_chain(symbol):
 Option chains and historical daily returns
 
 """
-"""
+
 SPX,S,SPX_info = options_chain("^SPX")
 VIX_info = options_chain("^VIX")
 VVIX_info = options_chain("^VVIX")
@@ -81,18 +81,20 @@ date_today = str(datetime.datetime.today().date())
 VVIX_daily = yf.download('^VVIX', start="2004-01-03", end=date_today, interval='1d')
 VIX_daily  = yf.download('^VIX',  start="2004-01-03", end=date_today, interval='1d')
 SPX_daily  = yf.download('^SPX',  start="2004-01-03", end=date_today, interval='1d')
-"""
 
 """
 Using preloaded data
 """
+#%%
+"""
+
 SPX = pd.read_csv('Live_Data_CSV_Sheets/SPX_options_chain_26_11_2023.csv',index_col=0)
 S = pd.read_csv('Live_Data_CSV_Sheets/spot_prices_26_11_2023.csv', index_col=0).iloc[0,0]
 
 SPX_daily = pd.read_csv('Live_Data_CSV_Sheets/SPX_daily.csv', parse_dates=['Date'], index_col='Date')
 VIX_daily = pd.read_csv('Live_Data_CSV_Sheets/VIX_daily.csv', parse_dates=['Date'], index_col='Date')
 VVIX_daily= pd.read_csv('Live_Data_CSV_Sheets/VVIX_daily.csv',parse_dates=['Date'], index_col='Date')
-
+"""
 #%%
 
  
@@ -120,18 +122,22 @@ Implied_Dividend_Curve = CubicSpline(Implied_Dividend_Dates, Implied_Dividend_Ra
 """
 Retrieving ATM (that is also OTM) options data for calculating ATM vol.
 """
+price_type = 'lastPrice'
 
-SPX_call_ATM = SPX.loc[(SPX['dte']>0 ) & (SPX['dte']<0.03) & (SPX['midPrice']>0.10) & (SPX['volume']>5) 
-                       & (SPX['strike']<=S+50) & (SPX['CALL']==True) & (SPX['strike']>=S)]
-SPX_put_ATM = SPX.loc[(SPX['dte']>0 ) & (SPX['dte']<0.03) & (SPX['midPrice']>0.10) & (SPX['volume']>5)
-                      & (SPX['strike']>=S-50) & (SPX['CALL']==False) & (SPX['strike']<=S)]
+
+SPX_call_ATM = filter_option_chain(SPX, 0.000001, 0.03, S, S+50, 5, 'c', price_type, 0.10)
+    
+SPX_put_ATM = filter_option_chain(SPX, 0.000001, 0.03, S-50, S, 5, 'p', price_type, 0.10)
 
 SPX_ATM = pd.concat([SPX_call_ATM,SPX_put_ATM])
 
 """
 Retrieving liquid OTM options data for calibration.
+
 """
-SPX_call_calib = SPX.loc[(SPX['dte'] > t) & (SPX['midPrice']>0.10) & (SPX['volume']>600) 
+SPX_call_calib = filter_option_chain(SPX, 20/365, 10000, S+5, 9999999999, 600, 'c', price_type, 0.10)
+SPX_put_calib  = filter_option_chain(SPX, 20/365, 10000, 0, S-5, 600, 'p', price_type, 0.10)
+SPX_call_calib = SPX.loc[(SPX['dte'] > t) & (SPX['midPrice'] > 0.10) & (SPX['volume']>600) 
                        &  (SPX['CALL']==True) & (SPX['strike']>=S+25)]
 SPX_put_calib = SPX.loc[(SPX['dte'] > t)  & (SPX['midPrice']>0.10) & (SPX['volume']>600)
                        & (SPX['CALL']==False) & (SPX['strike']<=S+25)]
@@ -152,12 +158,11 @@ market_price = SPX_ATM.pivot_table(index='dte',columns='strike',values='midPrice
 # Creating DataFrame for the vol so it is like the options prie dataframe
 vol_ATM = pd.DataFrame().reindex_like(market_price)
 
-
 """
 Calculating V0 from ATM options data.
 
 """
-T_ATM, K_ATM, r_ATM, q_ATM, option_prices_ATM, flag_ATM = df_to_numpy(SPX_ATM, Treasury_Curve, Implied_Dividend_Curve)
+T_ATM, K_ATM, r_ATM, q_ATM, option_prices_ATM, flag_ATM = df_to_numpy(SPX_ATM, Treasury_Curve, Implied_Dividend_Curve, price_type)
 
 # Calculating implied volatility for ATM options.
 imp_vol_ATM = iv(option_prices_ATM, S, K_ATM, T_ATM, r_ATM, flag_ATM, q_ATM, model='black_scholes_merton',return_as='numpy')
@@ -195,12 +200,15 @@ v0_guess = v0_guess**2
 Calculating implied vol from the data we wish to calibrated to.
 """
 
-T_calib, K_calib, r_calib, q_calib, option_prices_calib, flag_calib = df_to_numpy(SPX_calib, Treasury_Curve, Implied_Dividend_Curve)
+T_calib, K_calib, r_calib, q_calib, option_prices_calib, flag_calib = df_to_numpy(SPX_calib, Treasury_Curve, Implied_Dividend_Curve, price_type)
 
 
 # Calculating implied volatility for the options we are calibrating to.
 imp_vol_calib = iv(option_prices_calib, S, K_calib, T_calib, r_calib, flag_calib, q_calib, model='black_scholes_merton',return_as='numpy').reshape(np.size(K_calib),1)
-imp_vol_calib = 100 * imp_vol_calib
+
+imp_vol_calib, option_prices_calib, K_calib, T_calib, r_calib, flag_calib, q_calib = removing_nans(imp_vol_calib, option_prices_calib, K_calib, T_calib, r_calib, flag_calib, q_calib)
+
+imp_vol_calib = 100 * imp_vol_calib.reshape(np.size(imp_vol_calib),1)
 
 
 
