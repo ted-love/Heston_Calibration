@@ -60,16 +60,44 @@ def removing_nans(vol, option_prices, K, T, r, flag, q):
     
     return vol, option_prices, K, T, r, flag, q
             
-    
 
 
+def removing_nans_LM(f_x,option_prices, K, T, r, flag, q):
+    i=0
+    M=np.size(K)
+    while i < M:
+        
+        if np.isnan(f_x[i,0]):
+            option_prices = np.delete(option_prices,i,axis=0)
+            f_x = np.delete(f_x,i,axis=0)
+            K = np.delete(K,i)
+            T = np.delete(T,i)
+            r = np.delete(r,i)
+            flag = np.delete(flag,i)
+            q = np.delete(q,i)
+            M-=1
+        i+=1
 
+    return f_x,option_prices, K, T, r, flag, q
 
+def removing_nans_J(J, f_x, option_prices, K, T, r, flag, q):
+    i=0
+    M=np.size(K)
 
+    while i < M:
+        
+        if np.isnan(J[:,i]).any():
+            J = np.delete(J,i,axis=1) 
+            f_x = np.delete(f_x,i,axis=0)
+            option_prices = np.delete(option_prices,i,axis=0)
+            K = np.delete(K,i)
+            T = np.delete(T,i)
+            r = np.delete(r,i)
+            flag = np.delete(flag,i)
+            q = np.delete(q,i)
+            M-=1
+        i+=1
 
-
-
-
-
+    return J, f_x, option_prices, K, T, r, flag, q
 
 

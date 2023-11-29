@@ -20,6 +20,7 @@ from tools.Heston_COS_METHOD import heston_cosine_method
 from py_vollib_vectorized import vectorized_implied_volatility as calculate_iv
 from scipy.linalg import inv
 from tools.heston_derivative_constraints import heston_constraints,heston_implied_vol_derivative
+from tools.clean_up_helpers import removing_nans_LM,removing_nans_J
 
 
 def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho,kappa,flag,precision,params_2b_calibrated):
@@ -64,6 +65,9 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
         Option typ, 'c' for call and 'p' for put.
     precision : Float
         precision of numerical differentiation
+    params_2b_calibrated : list
+        list of parameters (as str) you want to calibrate (as flags).
+        E.g. if params_2b_calibrated = [v0,kappa,rho], then you are keeping v_bar and sigma constant.
 
     Returns
     -------
@@ -85,9 +89,13 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
     eps_2 = eps_1
     eps_3 = 1e-10
     f_x = C_market - (calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,old_params[0,0],old_params[4,0],old_params[1,0],old_params[2,0],old_params[3,0],flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K),1)
+    
+    f_x, C_market, K, T, r, flag, q = removing_nans_LM(f_x, C_market, K, T, r, flag, q)
+
     F_x = 0.5 * (1/M) * f_x.T @ f_x
     J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0], precision, params_2b_calibrated)
     
+    J, f_x, C_market, K, T, r, flag, q = removing_nans_J(J, f_x, C_market, K, T, r, flag, q)
     g = (1/M) * J @ f_x
 
     A = J@J.T 
@@ -102,6 +110,7 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
         # Calculating step of the parameters. inv is linalg.inv
         delta_params = inv((A + mu*np.eye(np.size(old_params)))) @ -g
         
+      
         new_params = heston_constraints(old_params + delta_params, old_params)
         
         # Cost-Function of new step
@@ -119,6 +128,8 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
 
             J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0], precision, params_2b_calibrated)
             
+           # J, C_market, f_xh, K, T, r, flag, q = removing_nans_LM(J, C_market, f_xh, K, T, r, flag, q)
+           
             f_x = f_xh[:]
             F_x = 0.5 * (1/M) * f_x.T @ f_x
                         
@@ -128,10 +139,15 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
             # Adjust damping factor
             mu = mu*np.maximum(1/3 , 1-(2*gain_ratio - 1)**3)[0,0]
             nu = 2
+            
+            
 
-             
+            
             if k % 10 == 0:
                 print('\nIteration: ', k,'\n', old_params)
+                print('\nmu = ',mu)
+            
+         
 
             if mu==np.inf:
                 print('overflow')
@@ -142,8 +158,7 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
             try:
                 mu=mu*nu
                 nu*=2
-               
-            
+             
             # If we the damping factor goes off to infinity
             except:
                 print("overflow")
