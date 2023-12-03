@@ -19,10 +19,8 @@ from tools.Levenberg_Marquardt import levenberg_Marquardt
 from tools.Heston_COS_METHOD import heston_cosine_method
 from tools.Implied_Dividend_Yield import Implied_Dividend_Yield
 from tools.stock_vol_correlation import calculate_yearly_correlation
-from tools.clean_up_helpers import df_to_numpy,filter_option_chain,removing_nans
-from scipy.interpolate import griddata
-import matplotlib.pyplot as plt
-from matplotlib.ticker import MultipleLocator
+from tools.Heston_Calibration_Class import Data_Class
+
 
 #%%
 def options_chain(symbol):
@@ -60,7 +58,7 @@ def options_chain(symbol):
         options = options.append(opt, ignore_index=True)
 
     options['expirationDate'] = pd.to_datetime(options['expirationDate'])
-    options['dte'] = (options['expirationDate'] - datetime.datetime.today()).dt.days / 365
+    options['dte'] = ((options['expirationDate'] - datetime.datetime.today()).dt.days + 1) / 365
     
     options['CALL'] = options['contractSymbol'].str[4:].apply(lambda x: "C" in x)
     
@@ -77,7 +75,7 @@ Option chains and historical daily returns
 
 """
 
-
+"""
 SPX,S,SPX_info = options_chain("^SPX")
 VIX_info = options_chain("^VIX")
 VVIX_info = options_chain("^VVIX")
@@ -87,12 +85,15 @@ date_today = str(datetime.datetime.today().date())
 VVIX_daily = yf.download('^VVIX', start="2004-01-03", end=date_today, interval='1d')
 VIX_daily  = yf.download('^VIX',  start="2004-01-03", end=date_today, interval='1d')
 SPX_daily  = yf.download('^SPX',  start="2004-01-03", end=date_today, interval='1d')
+if S==0:
+   S= 4550.58
 
+"""
 
+#%%
 """
 Using preloaded data
 """
-#%%
 
 SPX = pd.read_csv('Results_SPX_2023-11-26/SPX_options_chain.csv',index_col=0)
 S = pd.read_csv('Results_SPX_2023-11-26/spot_prices.csv', index_col=0).iloc[0,0]
@@ -100,16 +101,12 @@ S = pd.read_csv('Results_SPX_2023-11-26/spot_prices.csv', index_col=0).iloc[0,0]
 SPX_daily = pd.read_csv('Results_SPX_2023-11-26/SPX_daily.csv', parse_dates=['Date'], index_col='Date')
 VIX_daily = pd.read_csv('Results_SPX_2023-11-26/VIX_daily.csv', parse_dates=['Date'], index_col='Date')
 VVIX_daily= pd.read_csv('Results_SPX_2023-11-26/VVIX_daily.csv',parse_dates=['Date'], index_col='Date')
-data_today = '2023-11-26'
+date_today = '2023-11-26'
 
 #%%
-
  
 """
-
 Creating term-structure for the risk-free rate & implied dividend yields
-
-
 """
 
 Treasury_Dates = [0, 1/12, 3/12, 6/12, 1, 2, 5, 10, 30]
@@ -126,56 +123,86 @@ Implied_Dividend_Curve = CubicSpline(Implied_Dividend_Dates, Implied_Dividend_Ra
 #%%
 
 """
-Retrieving ATM (that is also OTM) options data for calculating ATM vol.
-"""
-price_type = 'lastPrice'
-
-tmin_atm = 0.000001
-tmax_atm = 0.03
-SPX_call_ATM = filter_option_chain(SPX, tmin_atm, tmax_atm, S, S+50, 5, 'c', price_type, 0.10)
-    
-SPX_put_ATM = filter_option_chain(SPX, tmin_atm, tmax_atm, S-50, S, 5, 'p', price_type, 0.10)
-
-SPX_ATM = pd.concat([SPX_call_ATM,SPX_put_ATM])
-
-"""
 Retrieving liquid OTM options data for calibration.
 
 """
-volume=50
-tmin = 10/365
+
+volume = 600
+tmin = 50/365
 tmax = 999999/365
-SPX_call_calib = filter_option_chain(SPX, tmin, tmax, S, 9999999999, volume, 'c', price_type, 0.10)
-SPX_put_calib  = filter_option_chain(SPX, tmin, tmax, 0, S-5, volume, 'p', price_type, 0.10)
+price_type = 'lastPrice'
 
+Data_calib = Data_Class()
+Data_calib.S = S
+
+SPX_call_calib = Data_calib.filter_option_chain(SPX, tmin, tmax, S, 9999999999, volume, 'c', price_type, 0.10)
+SPX_put_calib  = Data_calib.filter_option_chain(SPX, tmin, tmax, 0, S-5, volume, 'p', price_type, 0.10)
+
+# Removing every m option up until time tt if there is a lot of data.
+if volume < 200:
+    tt=1
+    m = 2
+    SPX_put_calib = Data_calib.remove_every_2nd_option(SPX_put_calib,tt,m)
+    m=3
+    SPX_call_calib = Data_calib.remove_every_2nd_option(SPX_call_calib, tt, m)
+    
 SPX_calib = pd.concat([SPX_call_calib,SPX_put_calib])
-
+Data_calib.option_chain = SPX_calib
            
-market_price = np.empty([len(SPX_ATM),1])
+
+
+"""
+Calculating implied vol from the data we wish to calibrated to.
+"""
+
+Data_calib.df_to_numpy(Treasury_Curve, Implied_Dividend_Curve, price_type)
+
+Data_calib.calculate_implied_vol()
+Data_calib.removing_iv_nan()
 
 #%%
 
 """
-Retrieving Strikes, expiries and option prices are NumPy arrays
+Retrieving ATM (that is also OTM) options data for calculating ATM vol.
 """
 
-market_price = SPX_ATM.pivot_table(index='dte',columns='strike',values='midPrice')
+tmin_atm = 0.000001
+tmax_atm = 0.03
+
+"""
+Create class for data. All option data is stored in this class object as "bad" options
+will be removed later on. 
+"""
+Data_ATM = Data_Class()
+Data_ATM.S = S
+
+SPX_call_ATM = Data_ATM.filter_option_chain(SPX, tmin_atm, tmax_atm, S, S+50, 5, 'c', price_type, 0.10)
+SPX_put_ATM = Data_ATM.filter_option_chain(SPX, tmin_atm, tmax_atm, S-50, S, 5, 'p', price_type, 0.10)
+
+Data_ATM.option_chain=pd.concat([SPX_call_ATM,SPX_put_ATM])
+
+
+"""
+Retrieving Strikes, expiries and option prices are NumPy arrays
+"""
+market_price = np.empty([len(Data_ATM.option_chain),1])
+
+market_price = (Data_ATM.option_chain).pivot_table(index='dte',columns='strike',values='midPrice')
 
 # Creating DataFrame for the vol so it is like the options prie dataframe
 vol_ATM = pd.DataFrame().reindex_like(market_price)
 
 """
-Calculating V0 from ATM options data.
-
+Calculating implied vol from ATM options data to use as V_0 initial guess 
 """
-T_ATM, K_ATM, r_ATM, q_ATM, option_prices_ATM, flag_ATM = df_to_numpy(SPX_ATM, Treasury_Curve, Implied_Dividend_Curve, price_type)
+Data_ATM.df_to_numpy(Treasury_Curve, Implied_Dividend_Curve, price_type)
 
 # Calculating implied volatility for ATM options.
-imp_vol_ATM = calculate_iv(option_prices_ATM, S, K_ATM, T_ATM, r_ATM, flag_ATM, q_ATM, model='black_scholes_merton',return_as='numpy')
+imp_vol_ATM = calculate_iv(Data_ATM.market_prices, Data_ATM.S, Data_ATM.K, Data_ATM.T, Data_ATM.r, Data_ATM.flag, Data_ATM.q, model='black_scholes_merton',return_as='numpy')
 
 idx=0
-for i in range(len(T_ATM)):
-    vol_ATM.loc[T_ATM[i]][K_ATM[i]] = imp_vol_ATM[i]
+for i in range(len(Data_ATM.T)):
+    vol_ATM.loc[Data_ATM.T[i]][Data_ATM.K[i]] = imp_vol_ATM[i]
 
 
 """
@@ -203,26 +230,11 @@ v0_guess = v0_guess**2
 
 
 """
-Calculating implied vol from the data we wish to calibrated to.
-"""
-
-T_calib, K_calib, r_calib, q_calib, option_prices_calib, flag_calib = df_to_numpy(SPX_calib, Treasury_Curve, Implied_Dividend_Curve, price_type)
-
-
-# Calculating implied volatility for the options we are calibrating to.
-imp_vol_calib = calculate_iv(option_prices_calib, S, K_calib, T_calib, r_calib, flag_calib, q_calib, model='black_scholes_merton',return_as='numpy').reshape(np.size(K_calib),1)
-
-imp_vol_calib, option_prices_calib, K_calib, T_calib, r_calib, flag_calib, q_calib = removing_nans(imp_vol_calib, option_prices_calib, K_calib, T_calib, r_calib, flag_calib, q_calib)
-
-imp_vol_calib = 100 * imp_vol_calib.reshape(np.size(imp_vol_calib),1)
-
-
-
-"""
-Calculating historical averages for initial guesses. Convert std to var for heston
+Calculating historical averages for sigma and v_bar initial guesses.
 """
 VVIX_mean = (np.mean(VVIX_daily['Close'])/100)**2
 VIX_mean  = (np.mean(VIX_daily['Close'])/100)**2
+
 
 # Local module to calculate the average correlation each year.
 rho_mean  = calculate_yearly_correlation(SPX_daily,VIX_daily)
@@ -231,7 +243,7 @@ rho_mean  = calculate_yearly_correlation(SPX_daily,VIX_daily)
 N = 240                  # Number of terms of summation during COS-expansion
 L = 20                   # Length of truncation
 I = 600                  # Max numbr of accepted iterations of calibration
-w = 1.00                 # Weight of initial damping factor   
+w = 1e-3                 # Weight of initial damping factor   
 F = 10                   # Factor to reduce pre-calibration by
 precision = 0.01         # Precision of numerical differentiation
 
@@ -241,7 +253,7 @@ Initial Guesses
 v_bar_guess = VIX_mean   # v_bar : long-term vol
 sigma_guess = VVIX_mean  # sigma : vol of vol
 rho_guess = rho_mean     # rho   : correlation between S and V
-kappa_guess = 2.5        # Kappa : rate of mean-reversion
+kappa_guess = 0.655      # Kappa : rate of mean-reversion
 v0_guess = v0_guess      # v0    : initial vol
 
 
@@ -253,147 +265,51 @@ initial_guesses = np.array([ v_bar_guess,
 
 """
 Choose params you want to calibrated. Params not in params_2b_calibrated will be fixed. 
-put params to be calibrated: 'v0','vbar','sigma','rho','kappa'
+put params to be calibrated: params_2b_calibrated = ['v0','vbar','sigma','rho','kappa']
 """
 
-params_2b_calibrated = ['v0','vbar','sigma','rho','kappa']
+params_2b_calibrated = ['v0','vbar','sigma','rho','sigma']
 #%%
-    
-error_array=np.empty([7,2])
-for i in range(1):
 
-    """
-    Using an initial calibration with 1/10 of the data. 
-    """
-    
-    if i==1:
-        M = np.size(K_calib)
-        
-        K_ini = np.empty(M//F)
-        T_ini = np.empty(M//F)
-        q_ini = np.empty(M//F)
-        r_ini = np.empty(M//F)
-        flag_ini = np.empty(M//F, dtype = str)
-        imp_vol_ini = np.empty(M//F).reshape(M//F,1)
-        for k in range(M//F):
-            K_ini[k] = K_calib[k*F]
-            T_ini[k] = T_calib[k*F]
-            q_ini[k] = q_calib[k*F]
-            r_ini[k] = r_calib[k*F]
-            flag_ini[k] = flag_calib[k*F]
-            imp_vol_ini[k,0] = imp_vol_calib[k*F]
-            
-        
-        I_ini = I/F
-        
-    
-        ini_calibrated_params, counts_accepted, counts_rejected = levenberg_Marquardt(initial_guesses,imp_vol_ini,I_ini,w,S,K_ini,T_ini,N,L,r_ini,q_ini,0,0,0,0,0,flag_ini,precision,params_2b_calibrated)
-        
-        """
-        Then use the resuls as the initial guess for full calibration with a smaller damping factor weight. 
-        """ 
-        initial_guesses = ini_calibrated_params 
-        
-    if i==1:
-        w = w*1e-3
-    
-    # Start Calibration
-    calibrated_params,counts_accepted,counts_rejected = levenberg_Marquardt(initial_guesses,imp_vol_calib,I,w,S,K_calib,T_calib,N,L,
-                                                                            r_calib,q_calib,0,0,0,0,0,flag_calib,precision,params_2b_calibrated)
-    
-    
-    # Prices from the calibrated paramters.
-    calibrated_prices = heston_cosine_method(S,K_calib,T_calib,N,L,r_calib,q_calib,calibrated_params[0],calibrated_params[4],calibrated_params[1],calibrated_params[2],calibrated_params[3],flag_calib)
-    calibrated_iv = (calculate_iv(calibrated_prices[0,:], S, K_calib, T_calib, r_calib, flag_calib, q_calib, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K_calib),1)
-    
-    
-    # Removing nan values if there were any from small priced option 
-    nan_count = 0
-    M = np.size(K_calib)
-    for j in range(M):
-        if np.isnan(calibrated_iv[j]):
-            calibrated_iv[j]=0.
-            imp_vol_calib[j]=0.
-            nan_count+=1
- 
-    
-    print('\nCalibrated_Params:\n', calibrated_params)
-    print('\ncost_function_error (implied vol): ', np.sqrt((1/(M - nan_count)) * np.sum((calibrated_iv - imp_vol_calib)**2)))
-    
-    error_array[0,i] = np.sqrt((1/(M - nan_count)) * np.sum((calibrated_iv - imp_vol_calib)**2))           
-    error_array[1,i] = np.size(K_calib)
-    error_array[2:,i] = np.squeeze(calibrated_params)
+error_array=np.empty([7])
 
-print("error options without a pre-calibration: ", error_array[0,0])
-print("error options using a pre-calibration:  ", error_array[0,1])
+min_acc = 1e-3
+accelerator = 1
 
-error_df = pd.DataFrame(error_array,index=['RMSE','No. Options','v_bar','sigma','rho','kappa','v0'],columns=['no pre-calibration','using pre-calibration'])
+
+calibrated_params,counts_accepted,counts_rejected,RMSE = levenberg_Marquardt(Data_calib,initial_guesses,I,w,N,L,precision,params_2b_calibrated,accelerator,min_acc)
+
+calibrated_prices = heston_cosine_method(Data_calib.S,Data_calib.K,Data_calib.T,N,L,Data_calib.r,Data_calib.q,calibrated_params[0],calibrated_params[4],calibrated_params[1],calibrated_params[2],calibrated_params[3],Data_calib.flag)
+calibrated_iv = 100*calculate_iv(calibrated_prices[0,:], Data_calib.S, Data_calib.K, Data_calib.T, Data_calib.r, Data_calib.flag, Data_calib.q, model='black_scholes_merton',return_as='numpy')
+
+# Removing nan values if there were any from small priced options 
+calibrated_iv = Data_calib.check_4_calibrated_nans(calibrated_iv)
+
+M=np.size(Data_calib.K)
+
+rmse = np.sqrt((1/M) * np.sum((calibrated_iv - Data_calib.market_vol)**2))
+
+print('\nCalibrated_Params:\n', calibrated_params)
+print('\ncost_function_error (implied vol as a %): ', rmse)
+
+error_array[0] = rmse
+error_array[1] = int(M)
+error_array[2:] = np.squeeze(calibrated_params)
+
+error_df = pd.DataFrame(error_array,index=['RMSE','No. Options','v_bar','sigma','rho','kappa','v0'],columns=['Results'])
+Data_calib.plot_save_surface(calibrated_iv, date_today)
 
 
 
 
 #%%
 
-
-y = K_calib/S
-K_vals, T_vals = np.meshgrid(np.linspace(min(y), max(y), 100),
-                             np.linspace(min(T_calib), max(T_calib), 100))
-
-# Interpolating the calibrated surface
-calibrated_iv_interp = griddata((y, T_calib), calibrated_iv, (K_vals, T_vals), method='cubic')
-
-# Interpolating the original implied volatilities
-imp_vol_interp = griddata((y, T_calib), imp_vol_calib, (K_vals, T_vals), method='cubic')
-
-# Plotting the surface
-
-fig = plt.figure(figsize=(13, 5),dpi=300)
-
-plt.subplots_adjust(wspace=-0.5)
-ax1 = fig.add_subplot(121, projection='3d')
-ax1.plot_surface(K_vals, T_vals, np.squeeze(calibrated_iv_interp), cmap='viridis')
-
-
-ax1.set_title('calibrated surface',y=0.95,fontsize=16)
-ax1.set_xlabel('Moneyness (K/S)',fontsize=12)
-ax1.set_ylabel('Expiration (T)',fontsize=12)
-ax1.zaxis.set_rotate_label(False)
-ax1.tick_params(axis='both', labelsize=12)
-ax1.set_zlabel('implied vol',rotation=90)
-ax1.azim+=-10
-ax1.elev+=-12
-ax1.w_yaxis.set_major_locator(MultipleLocator(1))
-ax1.w_zaxis.set_major_locator(MultipleLocator(10))
-
-ax1.zaxis.label.set_verticalalignment('center')  
-ax1.set_box_aspect(aspect=None, zoom=0.9)
-
-
-
-ax2 = fig.add_subplot(122, projection='3d')
-ax2.plot_surface(K_vals, T_vals, np.squeeze(imp_vol_interp), cmap='plasma')
-ax2.set_title('iv surface',y=0.95,fontsize=16)
-ax2.set_xlabel('Moneyness (K/S)',fontsize=12)
-ax2.set_ylabel('Expiration (T)',fontsize=12)
-ax2.zaxis.set_rotate_label(False)
-ax2.tick_params(axis='both', labelsize=12)
-ax2.set_zlabel('implied vol',rotation=90)
-ax2.azim+=-10
-ax2.elev+=-12
-ax2.w_yaxis.set_major_locator(MultipleLocator(1))
-ax2.w_zaxis.set_major_locator(MultipleLocator(10))
-
-ax2.zaxis.label.set_verticalalignment('center')  
-ax2.set_box_aspect(aspect=None, zoom=0.9)
-fig.tight_layout()
-fig1 = plt.gcf()
-plt.show()
-
-#%%
+Data_calib
 try:
     os.mkdir(f'Results_SPX_{date_today}')
 except:
     pass
+
 error_df.to_csv(f'Results_SPX_{date_today}/Results.csv')
 SPX.to_csv(f'Results_SPX_{date_today}/SPX_options_chain.csv',)
 SPX_daily.to_csv(f'Results_SPX_{date_today}/SPX_daily.csv')
@@ -403,7 +319,6 @@ VVIX_daily.to_csv(f'Results_SPX_{date_today}/VVIX_daily.csv')
 spot_prices_dict = {"SPX_price" : [S]}
 spot_prices_df = pd.DataFrame(spot_prices_dict)
 spot_prices_df.to_csv(f'Results_SPX_{date_today}/spot_prices.csv')
-fig1.savefig(f'Results_SPX_{date_today}/surface.png',dpi=300)
 
 
 

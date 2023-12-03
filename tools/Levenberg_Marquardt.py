@@ -6,12 +6,10 @@ Created on Sat Oct 28 17:07:29 2023
 @author: ted
 """
 
-
 """
 This module is a box-constrained Levenberg-Marquardt Algorithm for the Heston Model. 
 
 """
-
 
 import warnings
 warnings.filterwarnings('ignore')
@@ -20,37 +18,34 @@ from tools.Heston_COS_METHOD import heston_cosine_method
 from py_vollib_vectorized import vectorized_implied_volatility as calculate_iv
 from scipy.linalg import inv
 from tools.heston_derivative_constraints import heston_constraints,heston_implied_vol_derivative
-from tools.clean_up_helpers import removing_nans_LM,removing_nans_J
 
-
-def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho,kappa,flag,precision,params_2b_calibrated):
+def levenberg_Marquardt(Data,old_params,I,w,N,L,precision,params_2b_calibrated,accel_mag,min_acc):
     """
+   
+    
+   
+    
+   
+    v_bar,v0,sigma,rho,kappa
+    
+    
+    
     
 
     Parameters
     ----------
+    Data : Class Object
+        Contains all the information on the options. 
     old_params : NumPy Array
         Parameters to be calibrated.
-    C_market : NumPy Array
-        Implied vol of market data to be calibrated on.
     I : Int
         Number of iterations.
     w : Float
         Initial damping factor weight.
-    S : Float
-        Spot price.
-    K : NumPy Array
-        Strike.
-    T : NumPy Array
-        Expiry.
     N : Int
         Number of steps of summation in the COS-expansion.
     L : Float
         Range of truncation in the COS-expansion.
-    r : NumPy Array
-        Interest Rate
-    q : Float
-        Dividend yield.
     v_bar : Float
         Long-Term vol.
     v0 : Float
@@ -61,13 +56,15 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
         Correlation between Stock and Volatility.
     kappa : Float
         Rate of mean-reversion.
-    flag : Str
-        Option typ, 'c' for call and 'p' for put.
     precision : Float
         precision of numerical differentiation
     params_2b_calibrated : list
         list of parameters (as str) you want to calibrate (as flags).
         E.g. if params_2b_calibrated = [v0,kappa,rho], then you are keeping v_bar and sigma constant.
+    accel_mag : float
+        the magnitude of the acceleration
+    min_acc : float
+        the minimum damping factor mu before the acceleration takes affect.
 
     Returns
     -------
@@ -84,80 +81,101 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
     
     nu = 2
   
-    M = np.size(K)
     eps_1 = 1e-5
     eps_2 = eps_1
-    eps_3 = 1e-10
-    f_x = C_market - (calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,old_params[0,0],old_params[4,0],old_params[1,0],old_params[2,0],old_params[3,0],flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K),1)
-    
-    f_x, C_market, K, T, r, flag, q = removing_nans_LM(f_x, C_market, K, T, r, flag, q)
+    eps_3 = 0.0005
 
-    F_x = 0.5 * (1/M) * f_x.T @ f_x
-    J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0], precision, params_2b_calibrated)
+    new_price = heston_cosine_method(Data.S, Data.K, Data.T,N,L,Data.r,Data.q,old_params[0,0],old_params[1,0],old_params[2,0],old_params[3,0],old_params[4,0],Data.flag)
+
+
+    new_vol = 100*calculate_iv(new_price,Data.S, Data.K, Data.T, Data.r, Data.flag, Data.q, model='black_scholes_merton',return_as='numpy') 
+
+    f_x = (Data.market_vol - new_vol).reshape(np.size(new_vol),1)
     
-    J, f_x, C_market, K, T, r, flag, q = removing_nans_J(J, f_x, C_market, K, T, r, flag, q)
+    # Removing problematic options (give nan)
+    f_x = Data.removing_nans_fx(f_x)
+    
+    J = -1*heston_implied_vol_derivative(Data.r,Data.K,Data.T,N,L,Data.q,Data.S,Data.flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0], precision, params_2b_calibrated)
+
+    # Removing problematic options (give nan)
+    J, f_x = Data.removing_nans_J(J, f_x)
+    
+    M = np.size(Data.K)
+    
+    F_x = 0.5 * (1/M) * f_x.T @ f_x
     g = (1/M) * J @ f_x
+
 
     A = J@J.T 
     mu = w * np.amax(np.diag(J@J.T))
     print('mu: ', mu)
-    
+
+
     counts_accepted=0
     counts_rejected=0
     k=0
-    while k<I:
+    accelerator=1
+    RMSE = []
+    while k < I:
         
         # Calculating step of the parameters. inv is linalg.inv
-        delta_params = inv((A + mu*np.eye(np.size(old_params)))) @ -g
+        delta_params = inv((A + mu*np.eye(np.size(old_params)))) @ -g * (accelerator)
         
-      
         new_params = heston_constraints(old_params + delta_params, old_params)
         
+        # Calculating implied vol of new step
+        new_price = heston_cosine_method(Data.S,Data.K,Data.T,N,L,Data.r,Data.q,new_params[0],new_params[4],new_params[1],new_params[2],new_params[3],Data.flag)
+        new_vol = 100*calculate_iv(new_price,Data.S, Data.K, Data.T, Data.r, Data.flag, Data.q, model='black_scholes_merton',return_as='numpy')
+        f_xh = (Data.market_vol - new_vol).reshape(np.size(new_vol),1)
+
+        f_xh = Data.removing_nans_fx(f_xh)
+        
         # Cost-Function of new step
-        f_xh = C_market - (calculate_iv(heston_cosine_method(S,K,T,N,L,r,q,new_params[0],new_params[4],new_params[1],new_params[2],new_params[3],flag),S, K, T, r, flag, q, model='black_scholes_merton',return_as='numpy')*100).reshape(np.size(K),1)
         F_xh = 0.5 * (1/M) * f_xh.T@f_xh
-  
+        
+        # Checking if step is better than the previous accepted step.
         gain_ratio = (F_x[0] - F_xh[0]) / (0.5*delta_params.T @ (mu*delta_params - g))
-   
+        
         if gain_ratio > 0:
+            
             counts_accepted+=1
             
-            
             old_params = new_params[:]
-
-
-            J = -1*heston_implied_vol_derivative(r,K,T,N,L,q,S,flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0], precision, params_2b_calibrated)
             
-           # J, C_market, f_xh, K, T, r, flag, q = removing_nans_LM(J, C_market, f_xh, K, T, r, flag, q)
-           
+            J = -1*heston_implied_vol_derivative(Data.r,Data.K,Data.T,N,L,Data.q,Data.S,Data.flag,old_params[1,0],old_params[2,0],old_params[4,0],old_params[0,0],old_params[3,0], precision, params_2b_calibrated)
+            
+            J, f_xh = Data.removing_nans_J(J, f_xh)
+            
             f_x = f_xh[:]
-            F_x = 0.5 * (1/M) * f_x.T @ f_x
-                        
+            F_x = F_xh[:]
             g = (1/M) * J @ f_x
             A = J@J.T 
-            
+
             # Adjust damping factor
             mu = mu*np.maximum(1/3 , 1-(2*gain_ratio - 1)**3)[0,0]
             nu = 2
             
+            RMSE.append(np.sqrt(2*F_x[0,0]))
             
-
+            # Adjusting accelerator
+            if mu < min_acc:
+                accelerator = accel_mag*accelerator
             
             if k % 10 == 0:
-                print('\nIteration: ', k,'\n', old_params)
+                print('\nIteration: ', k,'\nnew_params:\n', old_params)
                 print('\nmu = ',mu)
-            
-         
 
             if mu==np.inf:
                 print('overflow')
                 break
+            
         else:
 
             counts_rejected +=1
             try:
                 mu=mu*nu
                 nu*=2
+                accelerator=1
              
             # If we the damping factor goes off to infinity
             except:
@@ -176,20 +194,21 @@ def levenberg_Marquardt(old_params,C_market,I,w,S,K,T,N,L,r,q,v_bar,v0,sigma,rho
             skip=0
             break
         
-        if np.amax(g)<=eps_2:
+        if np.abs(np.amax(g))<=eps_2:
             print("Small J")
             skip=0
             break
-        """
-        if np.linalg.norm(delta_params)/np.linalg.norm(old_params) < eps_3:
-            print("Steps converging to 0!")
-            skip = 0
-            break
-        """
 
+        if k>=10:
+            if np.abs(RMSE[k] - RMSE[k-5]) < eps_3:
+                print("Steps converging to 0!")
+                skip = 0
+                break
+        
+        
         k+=1
         
     if skip==1:
         print('Exceeded maximum iterations')
 
-    return old_params, counts_accepted, counts_rejected
+    return old_params, counts_accepted, counts_rejected, RMSE
