@@ -132,6 +132,8 @@ tmin = 50/365
 tmax = 999999/365
 price_type = 'lastPrice'
 
+
+# Create a class to store all the data as we will be dynamically removing problematic options. 
 Data_calib = Data_Class()
 Data_calib.S = S
 
@@ -163,16 +165,12 @@ Data_calib.removing_iv_nan()
 #%%
 
 """
-Retrieving ATM (that is also OTM) options data for calculating ATM vol.
+Retrieving ATM (that is also OTM) options data for calculating ATM vol for initial calibration guesses.
 """
 
 tmin_atm = 0.000001
 tmax_atm = 0.03
 
-"""
-Create class for data. All option data is stored in this class object as "bad" options
-will be removed later on. 
-"""
 Data_ATM = Data_Class()
 Data_ATM.S = S
 
@@ -234,7 +232,6 @@ Calculating historical averages for sigma and v_bar initial guesses.
 """
 VVIX_mean = (np.mean(VVIX_daily['Close'])/100)**2
 VIX_mean  = (np.mean(VIX_daily['Close'])/100)**2
-
 
 # Local module to calculate the average correlation each year.
 rho_mean  = calculate_yearly_correlation(SPX_daily,VIX_daily)
@@ -300,11 +297,8 @@ error_df = pd.DataFrame(error_array,index=['RMSE','No. Options','v_bar','sigma',
 Data_calib.plot_save_surface(calibrated_iv, date_today)
 
 
-
-
 #%%
 
-Data_calib
 try:
     os.mkdir(f'Results_SPX_{date_today}')
 except:
