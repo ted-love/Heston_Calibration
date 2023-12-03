@@ -21,16 +21,7 @@ from tools.heston_derivative_constraints import heston_constraints,heston_implie
 
 def levenberg_Marquardt(Data,old_params,I,w,N,L,precision,params_2b_calibrated,accel_mag,min_acc):
     """
-   
-    
-   
-    
-   
-    v_bar,v0,sigma,rho,kappa
-    
-    
-    
-    
+  
 
     Parameters
     ----------
