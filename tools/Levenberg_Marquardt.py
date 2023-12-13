@@ -16,7 +16,7 @@ warnings.filterwarnings('ignore')
 import numpy as np
 from tools.Heston_COS_METHOD import heston_cosine_method
 from py_vollib_vectorized import vectorized_implied_volatility as calculate_iv
-from scipy.linalg import inv
+from scipy import linalg
 from tools.heston_derivative_constraints import heston_constraints,heston_implied_vol_derivative
 
 def levenberg_Marquardt(Data,old_params,I,w,N,L,precision,params_2b_calibrated,accel_mag,min_acc):
@@ -107,10 +107,11 @@ def levenberg_Marquardt(Data,old_params,I,w,N,L,precision,params_2b_calibrated,a
     k=0
     accelerator=1
     RMSE = []
+    identity_matrix = np.eye(5)
     while k < I:
         
         # Calculating step of the parameters. inv is linalg.inv
-        delta_params = inv((A + mu*np.eye(np.size(old_params)))) @ -g * (accelerator)
+        delta_params = linalg.inv(A + mu*identity_matrix) @ -g * (accelerator)
         
         new_params = heston_constraints(old_params + delta_params, old_params)
         
