@@ -1,6 +1,6 @@
 # Heston_Calibation
 
-Heston_Calibration.py calibrates the Heston Model using the Levenberg-Marquardt (LM) algoithm with COS-expansion calculation for the Heston model. Running the file will use pre-loaded historial data. The prices are transformed into implied volatilities and the heston is calibrated against the market implied vols. Dividend rates calculated from creating an implied forward-rate curve, and historical data is use for initial guesses.
+main.py calibrates the Heston Model using the Levenberg-Marquardt (LM) algoithm with COS-expansion calculation for the Heston model. Running the file will use pre-loaded historial data. The prices are transformed into implied volatilities and the heston is calibrated against the market implied vols. Dividend rates calculated from creating an implied forward-rate curve, and historical data is use for initial guesses.
 
 tools/Heston_COS_METHOD.py is a vectorised method of calculating European options for the heston model using cosine expansion. It is a robust method for fast Heston calculation and takes the cosine expansion of the whole integral of the fourier transform. It is vectorised along the different options AND vectorised along the summation. It is 300x faster than QuantLib's Python implementation FFT of the Heston, because we can truncate and use far less terms to converge (Typically only 64-100 terms vs 1,000 terms) 
 
